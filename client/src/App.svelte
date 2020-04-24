@@ -13,11 +13,11 @@
   ];
 
   onMount(async ()=>{
-    stream = await getMedia();
-    const video = document.getElementById("localVideo")
-    video.srcObject = stream;
-
-    establishConnection(stream);
+    establishConnection(async ()=>{
+      stream = await getMedia();
+      const video = document.getElementById("localVideo")
+      video.srcObject = stream;
+    });
   });
 
 	export let name;
