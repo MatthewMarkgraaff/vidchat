@@ -1,51 +1,66 @@
-import getMedia from './getMedia';
+'use strict';
+
 import io from 'socket.io-client';
 
-let localPeerConnection;
-let remotePeerConnection;
+var isChannelReady = false;
+var isInitiator = false;
+var isStarted = false;
+var localStream;
+var pc;
+var remoteStream;
+var turnReady;
 
-const configuration = null;
-
-let localStream;
-let remoteStream;
-
-const offerOptions = {
-  offerToReceiveVideo: 1,
+var pcConfig = {
+  'iceServers': [
+    /*
+  {
+    'urls': 'stun:stun.l.google.com:19302'
+  }
+  */
+  ]
 };
 
-export function establishConnection(getMediaCb) {
-  let isInitiator;
-  let socket = io.connect("localhost:8080");
+// Set up audio and video regardless of what devices are present.
+var sdpConstraints = {
+  offerToReceiveAudio: true,
+  offerToReceiveVideo: true
+};
 
-  const room = prompt("Enter room name:");
+let socket;
+let room;
 
-  socket.on('ipaddr', function(ipaddr) {
-    console.log('Server IP address is: ' + ipaddr);
-    // updateRoomURL(ipaddr);
-  });
+/////////////////////////////////////////////
 
-  socket.on('created', function(room, clientId) {
-    console.log('Created room', room, '- my client ID is', clientId);
+export function establishConnection(getStream) {
+  room = prompt('Enter room name:');
+
+  socket = io.connect("localhost:8080");
+
+  if (room !== '') {
+    socket.emit('create or join', room);
+    console.log('Attempted to create or  join room', room);
+    localStream = getStream();
+    maybeStart();
+  }
+
+  socket.on('created', function(room) {
+    console.log('Created room ' + room);
     isInitiator = true;
-    getMediaCb();
-  });
-
-  socket.on('joined', function(room, clientId) {
-    console.log('This peer has joined room', room, 'with client ID', clientId);
-    isInitiator = false;
-    createPeerConnection(isInitiator, configuration);
-    getMediaCb();
   });
 
   socket.on('full', function(room) {
-    alert('Room ' + room + ' is full. We will create a new room for you.');
-    window.location.hash = '';
-    window.location.reload();
+    console.log('Room ' + room + ' is full');
   });
 
-  socket.on('ready', function() {
-    console.log('Socket is ready');
-    createPeerConnection(isInitiator, configuration);
+  socket.on('join', function (room){
+    console.log('Another peer made a request to join room ' + room);
+    console.log('This peer is the initiator of room ' + room + '!');
+    isChannelReady = true;
+  });
+
+  socket.on('joined', function(room) {
+    console.log('joined: ' + room);
+    isChannelReady = true;
   });
 
   socket.on('log', function(array) {
@@ -54,52 +69,90 @@ export function establishConnection(getMediaCb) {
 
   socket.on('message', function(message) {
     console.log('Client received message:', message);
-    signalingMessageCallback(message);
+    if (message === 'got user media') {
+      maybeStart();
+    } else if (message.type === 'offer') {
+      if (!isInitiator && !isStarted) {
+        maybeStart();
+      }
+      pc.setRemoteDescription(new RTCSessionDescription(message));
+      doAnswer();
+    } else if (message.type === 'answer' && isStarted) {
+      pc.setRemoteDescription(new RTCSessionDescription(message));
+    } else if (message.type === 'candidate' && isStarted) {
+      var candidate = new RTCIceCandidate({
+        sdpMLineIndex: message.label,
+        candidate: message.candidate
+      });
+      pc.addIceCandidate(candidate);
+    } else if (message === 'bye' && isStarted) {
+      handleRemoteHangup();
+    }
   });
+}
 
-  // Joining a room.
-  socket.emit('create or join', room);
+////////////////////////////////////////////////
 
-  if (location.hostname.match(/localhost|127\.0\.0/)) {
-    socket.emit('ipaddr');
+function sendMessage(message) {
+  console.log('Client sending message: ', message);
+  socket.emit('message', message);
+}
+
+// This client receives a message
+
+////////////////////////////////////////////////////
+
+var localVideo = document.querySelector('#localVideo');
+var remoteVideo = document.querySelector('#remoteVideo');
+
+var constraints = {
+  video: true
+};
+
+console.log('Getting user media with constraints', constraints);
+
+if (location.hostname !== 'localhost') {
+  requestTurn(
+    'https://computeengineondemand.appspot.com/turn?username=41784574&key=4080218913'
+  );
+}
+
+function maybeStart() {
+  console.log('>>>>>>> maybeStart() ', isStarted, localStream, isChannelReady);
+  if (!isStarted && typeof localStream !== 'undefined' && isChannelReady) {
+    console.log('>>>>>> creating peer connection');
+    createPeerConnection();
+    pc.addStream(localStream);
+    isStarted = true;
+    console.log('isInitiator', isInitiator);
+    if (isInitiator) {
+      doCall();
+    }
   }
 }
 
-/****************************************************************************
-* WebRTC peer connection and data channel
-****************************************************************************/
+window.onbeforeunload = function() {
+  sendMessage('bye');
+};
 
-var peerConn;
-var dataChannel;
+/////////////////////////////////////////////////////////
 
-function signalingMessageCallback(message) {
-  if (message.type === 'offer') {
-    console.log('Got offer. Sending answer to peer.');
-    peerConn.setRemoteDescription(new RTCSessionDescription(message), function() {},
-                                  logError);
-    peerConn.createAnswer(onLocalSessionCreated, logError);
-
-  } else if (message.type === 'answer') {
-    console.log('Got answer.');
-    peerConn.setRemoteDescription(new RTCSessionDescription(message), function() {},
-                                  logError);
-
-  } else if (message.type === 'candidate') {
-    peerConn.addIceCandidate(new RTCIceCandidate({
-      candidate: message.candidate
-    }));
-
+function createPeerConnection() {
+  try {
+    pc = new RTCPeerConnection(null);
+    pc.onicecandidate = handleIceCandidate;
+    pc.onaddstream = handleRemoteStreamAdded;
+    pc.onremovestream = handleRemoteStreamRemoved;
+    console.log('Created RTCPeerConnnection');
+  } catch (e) {
+    console.log('Failed to create PeerConnection, exception: ' + e.message);
+    alert('Cannot create RTCPeerConnection object.');
+    return;
   }
 }
 
-function createPeerConnection(isInitiator, config) {
-  console.log('Creating Peer connection as initiator?', isInitiator, 'config:',
-              config);
-  peerConn = new RTCPeerConnection(config);
-
-// send any ice candidates to the other peer
-peerConn.onicecandidate = function(event) {
-  console.log('icecandidate event:', event);
+function handleIceCandidate(event) {
+  console.log('icecandidate event: ', event);
   if (event.candidate) {
     sendMessage({
       type: 'candidate',
@@ -110,110 +163,88 @@ peerConn.onicecandidate = function(event) {
   } else {
     console.log('End of candidates.');
   }
-};
-
-if (isInitiator) {
-  console.log('Creating Data Channel');
-  dataChannel = peerConn.createDataChannel('photos');
-  onDataChannelCreated(dataChannel);
-
-  console.log('Creating an offer');
-  peerConn.createOffer(onLocalSessionCreated, logError);
-} else {
-  peerConn.ondatachannel = function(event) {
-    console.log('ondatachannel:', event.channel);
-    dataChannel = event.channel;
-    onDataChannelCreated(dataChannel);
-  };
-}
 }
 
-function onLocalSessionCreated(desc) {
-  console.log('local session created:', desc);
-  peerConn.setLocalDescription(desc, function() {
-    console.log('sending local desc:', peerConn.localDescription);
-    sendMessage(peerConn.localDescription);
-  }, logError);
+function handleCreateOfferError(event) {
+  console.log('createOffer() error: ', event);
 }
 
-function onDataChannelCreated(channel) {
-  console.log('onDataChannelCreated:', channel);
+function doCall() {
+  console.log('Sending offer to peer');
+  pc.createOffer(setLocalAndSendMessage, handleCreateOfferError);
+}
 
-  channel.onopen = function() {
-    console.log('CHANNEL opened!!!');
-    sendBtn.disabled = false;
-    snapAndSendBtn.disabled = false;
-  };
+function doAnswer() {
+  console.log('Sending answer to peer.');
+  pc.createAnswer().then(
+    setLocalAndSendMessage,
+    onCreateSessionDescriptionError
+  );
+}
 
-  channel.onclose = function () {
-    console.log('Channel closed.');
-    sendBtn.disabled = true;
-    snapAndSendBtn.disabled = true;
+function setLocalAndSendMessage(sessionDescription) {
+  pc.setLocalDescription(sessionDescription);
+  console.log('setLocalAndSendMessage sending message', sessionDescription);
+  sendMessage(sessionDescription);
+}
+
+function onCreateSessionDescriptionError(error) {
+  trace('Failed to create session description: ' + error.toString());
+}
+
+function requestTurn(turnURL) {
+  var turnExists = false;
+  for (var i in pcConfig.iceServers) {
+    if (pcConfig.iceServers[i].urls.substr(0, 5) === 'turn:') {
+      turnExists = true;
+      turnReady = true;
+      break;
+    }
   }
-
-  channel.onmessage = (adapter.browserDetails.browser === 'firefox') ?
-  receiveDataFirefoxFactory() : receiveDataChromeFactory();
+  if (!turnExists) {
+    console.log('Getting TURN server from ', turnURL);
+    // No TURN server. Get one from computeengineondemand.appspot.com:
+    var xhr = new XMLHttpRequest();
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState === 4 && xhr.status === 200) {
+        var turnServer = JSON.parse(xhr.responseText);
+        console.log('Got TURN server: ', turnServer);
+        pcConfig.iceServers.push({
+          'urls': 'turn:' + turnServer.username + '@' + turnServer.turn,
+          'credential': turnServer.password
+        });
+        turnReady = true;
+      }
+    };
+    xhr.open('GET', turnURL, true);
+    xhr.send();
+  }
 }
 
-function receiveDataChromeFactory() {
-  var buf, count;
-
-  return function onmessage(event) {
-    if (typeof event.data === 'string') {
-      buf = window.buf = new Uint8ClampedArray(parseInt(event.data));
-      count = 0;
-      console.log('Expecting a total of ' + buf.byteLength + ' bytes');
-      return;
-    }
-
-    var data = new Uint8ClampedArray(event.data);
-    buf.set(data, count);
-
-    count += data.byteLength;
-    console.log('count: ' + count);
-
-    if (count === buf.byteLength) {
-// we're done: all data chunks have been received
-console.log('Done. Rendering photo.');
-renderPhoto(buf);
-}
-};
+function handleRemoteStreamAdded(event) {
+  console.log('Remote stream added.');
+  remoteStream = event.stream;
+  remoteVideo.srcObject = remoteStream;
 }
 
-function receiveDataFirefoxFactory() {
-  var count, total, parts;
+function handleRemoteStreamRemoved(event) {
+  console.log('Remote stream removed. Event: ', event);
+}
 
-  return function onmessage(event) {
-    if (typeof event.data === 'string') {
-      total = parseInt(event.data);
-      parts = [];
-      count = 0;
-      console.log('Expecting a total of ' + total + ' bytes');
-      return;
-    }
+function hangup() {
+  console.log('Hanging up.');
+  stop();
+  sendMessage('bye');
+}
 
-    parts.push(event.data);
-    count += event.data.size;
-    console.log('Got ' + event.data.size + ' byte(s), ' + (total - count) +
-                ' to go.');
+function handleRemoteHangup() {
+  console.log('Session terminated.');
+  stop();
+  isInitiator = false;
+}
 
-    if (count === total) {
-      console.log('Assembling payload');
-      var buf = new Uint8ClampedArray(total);
-      var compose = function(i, pos) {
-        var reader = new FileReader();
-        reader.onload = function() {
-          buf.set(new Uint8ClampedArray(this.result), pos);
-          if (i + 1 === parts.length) {
-            console.log('Done. Rendering photo.');
-            renderPhoto(buf);
-          } else {
-            compose(i + 1, pos + this.result.byteLength);
-          }
-        };
-        reader.readAsArrayBuffer(parts[i]);
-      };
-      compose(0, 0);
-    }
-  };
+function stop() {
+  isStarted = false;
+  pc.close();
+  pc = null;
 }
