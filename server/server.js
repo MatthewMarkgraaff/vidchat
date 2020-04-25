@@ -7,7 +7,7 @@ const cors = require('@koa/cors');
 
 app.use(cors());
 
-app.use(serve(path.join(__dirname, "../client/public/"), {}));
+app.use(serve(path.join(__dirname, "./client/public/"), {}));
 
 const server = require('http').createServer(app.callback())
 const io = require('socket.io')(server)
