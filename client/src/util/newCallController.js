@@ -11,10 +11,9 @@ const configuration = {
 let socket;
 let peerConnection;
 
+
 export async function newCallController(room) {
   socket = io.connect();
-
-  listenForSignals();
 
   console.log("creating or joining room: " + room);
   socket.emit(socketActions.createOrJoin, room);
@@ -30,55 +29,73 @@ export async function newCallController(room) {
   socket.on(socketActions.joined, (room)=>{
     console.log("someone joined the room");
   });
+
+  startWebRTC(true);
 }
 
-function listenForSignals() {
-  socket.on(socketActions.message, (message, client) => {
+export function startWebRTC(isOfferer) {
+  peerConnection = new RTCPeerConnection(configuration);
+
+  // 'onicecandidate' notifies us whenever an ICE agent needs to deliver a
+  // message to the other peer through the signaling server
+  peerConnection.onicecandidate = event => {
+    if (event.candidate) {
+      sendMessage({'candidate': event.candidate});
+    }
+  };
+
+  // If user is offerer let the 'negotiationneeded' event create the offer
+  if (isOfferer) {
+    peerConnection.onnegotiationneeded = () => {
+      peerConnection.createOffer().then(localDescCreated).catch(onError);
+    }
+  }
+
+  // When a remote stream arrives display it in the #remoteVideo element
+  peerConnection.ontrack = event => {
+    const stream = event.streams[0];
+    if (!remoteVideo.srcObject || remoteVideo.srcObject.id !== stream.id) {
+      const remoteVideo = document.getElementById('remoteVideo')
+      remoteVideo.srcObject = stream;
+    }
+  };
+
+  navigator.mediaDevices.getUserMedia({
+    audio: true,
+    video: true,
+  }).then(stream => {
+    // Display your local video in #localVideo element
+    const localVideo = document.getElementById('localVideo')
+    localVideo.srcObject = stream;
+    // Add your stream to be sent to the conneting peer
+    stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+  }, onError);
+
+  // Listen to signaling data from Scaledrone
+  socket.on('message', (message, client) => {
+    // Message was sent by us
+    /*
+    if (client.id === drone.clientId) {
+      return;
+    }
+    */
+
     if (message.sdp) {
+      // This is called after receiving an offer or answer from another peer
       peerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp), () => {
-        if (peerConnection.remoteDescription.type === socketActions.offer) {
+        // When receiving an offer lets answer it
+        if (peerConnection.remoteDescription.type === 'offer') {
           peerConnection.createAnswer().then(localDescCreated).catch(onError);
-          peerConnection.setRemoteDescription(new RTCSessionDescription(message));
         }
       }, onError);
     } else if (message.candidate) {
-      console.log("adding candidate " + message.candidate);
-      var candidate = new RTCIceCandidate({
-        sdpMLineIndex: message.candidate.sdpMLineIndex,
-        candidate: message.candidate
-      });
-      peerConnection.addIceCandidate(candidate);
+      // Add the new ICE candidate to our connections remote description
+      peerConnection.addIceCandidate(
+        new RTCIceCandidate(message.candidate), onSuccess, onError
+      );
     }
   });
 }
-
-export function startWebRTC(isOfferer, { localStream }) {
-  peerConnection = new RTCPeerConnection(configuration);
-
-  peerConnection.onicecandidate = (event) => {
-    const { candidate } = event;
-    if(candidate) {
-      sendMessage({ candidate });
-    }
-  }
-
-  if(isOfferer) {
-    peerConnection.onnegotiationneeded = async () => {
-      peerConnection.createOffer().then(localDescCreated).catch(onError)
-    }
-  }
-
-  peerConnection.onaddstream = ({ stream }) => {
-    const remoteVideo = document.getElementById("remoteVideo");
-    remoteVideo.srcObject = stream;
-  }
-
-  peerConnection.addStream(localStream);
-}
-
-function onError(error) {
-  console.error(error);
-};
 
 function localDescCreated(desc) {
   peerConnection.setLocalDescription(
@@ -87,6 +104,11 @@ function localDescCreated(desc) {
     onError
   );
 }
+
+function onError(err) {
+  console.log(err);
+}
+function onSuccess() {};
 
 export function sendMessage(message) {
   console.log('Client sending message: ', message);

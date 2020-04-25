@@ -15,11 +15,12 @@
       location.hash = Math.floor(Math.random() * 0xFFFFFF).toString(16);
     }
     const roomHash = location.hash.substring(1);
+    /*
     const stream = await getMedia();
     const video = document.getElementById("localVideo")
     video.srcObject = stream;
+    */
 
-    startWebRTC(true, { localStream: stream });
     newCallController(roomHash);
   });
 

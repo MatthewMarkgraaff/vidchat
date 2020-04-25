@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "dependencies": {
+    "@koa/cors": "^2.2.3",
     "koa": "^2.11.0",
     "koa-static": "^5.0.0",
     "node-static": "^0.7.11",
