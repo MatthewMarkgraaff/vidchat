@@ -1,10 +1,11 @@
 <script>
   import { onMount } from 'svelte';
+  import "../assets/main.scss";
   import getMedia from './util/getMedia';
   import adapter from 'webrtc-adapter';
   import { newCallController, startWebRTC } from './util/newCallController';
 
-  import Participant from './call/participant/Participant.svelte';
+  import Controls from './components/controls/Controls.svelte'
 
   const participants = [
     { id: 1, name: "matthew" }
@@ -14,23 +15,18 @@
     if (!location.hash) {
       location.hash = Math.floor(Math.random() * 0xFFFFFF).toString(16);
     }
-    const roomHash = location.hash.substring(1);
-    /*
-    const stream = await getMedia();
-    const video = document.getElementById("localVideo")
-    video.srcObject = stream;
-    */
 
-    newCallController(roomHash);
+    const roomHash = location.hash.substring(1);
+    //newCallController(roomHash);
   });
 
   export let name;
 </script>
 
-<main>
+<main id="video-container">
   <video id="localVideo" autoplay playsinline></video>
   <video id="remoteVideo" autoplay playsinline></video>
-  <canvas></canvas>
+  <Controls />
 </main>
 
 <style>
