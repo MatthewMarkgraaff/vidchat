@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "file": "bundle.css",
+  "sources": [
+    "../../App.svelte",
+    "../../Participant.svelte"
+  ],
+  "sourcesContent": [
+    "<script>\n  import { onMount } from 'svelte';\n  import getMedia from './util/getMedia';\n  import adapter from 'webrtc-adapter';\n  import { newCallController, startWebRTC } from './util/newCallController';\n\n  import Participant from './call/participant/Participant.svelte';\n\n  const participants = [\n    { id: 1, name: \"matthew\" }\n  ];\n\n  onMount(async ()=>{\n    if (!location.hash) {\n      location.hash = Math.floor(Math.random() * 0xFFFFFF).toString(16);\n    }\n    const roomHash = location.hash.substring(1);\n    /*\n    const stream = await getMedia();\n    const video = document.getElementById(\"localVideo\")\n    video.srcObject = stream;\n    */\n\n    newCallController(roomHash);\n  });\n\n  export let name;\n</script>\n\n<main>\n  <video id=\"localVideo\" autoplay playsinline></video>\n  <video id=\"remoteVideo\" autoplay playsinline></video>\n  <canvas></canvas>\n</main>\n\n<style>\n  main {\n    text-align: center;\n    padding: 1em;\n    max-width: 240px;\n    margin: 0 auto;\n  }\n\n  h1 {\n    color: #ff3e00;\n    text-transform: uppercase;\n    font-size: 4em;\n    font-weight: 100;\n  }\n\n  @media (min-width: 640px) {\n    main {\n      max-width: none;\n    }\n  }\n</style>\n",
+    "<script>\n</script>\n\n<video id=\"mini-video\" autoplay playsinline muted></video>\n\n<style>\n  video {\n    width: 200px;\n    height: 200px;\n  }\n</style>\n"
+  ],
+  "names": [],
+  "mappings": "AAoCE,IAAI,eAAC,CAAC,AACJ,UAAU,CAAE,MAAM,CAClB,OAAO,CAAE,GAAG,CACZ,SAAS,CAAE,KAAK,CAChB,MAAM,CAAE,CAAC,CAAC,IAAI,AAChB,CAAC,AASD,MAAM,AAAC,YAAY,KAAK,CAAC,AAAC,CAAC,AACzB,IAAI,eAAC,CAAC,AACJ,SAAS,CAAE,IAAI,AACjB,CAAC,AACH,CAAC;AChDD,KAAK,cAAC,CAAC,AACL,KAAK,CAAE,KAAK,CACZ,MAAM,CAAE,KAAK,AACf,CAAC"
+}
