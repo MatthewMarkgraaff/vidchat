@@ -17,7 +17,7 @@
     }
 
     const roomHash = location.hash.substring(1);
-    //newCallController(roomHash);
+    newCallController(roomHash);
   });
 
   export let name;

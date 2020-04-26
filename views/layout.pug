@@ -1,0 +1,29 @@
+doctype html
+html
+  head
+    title= title
+    link(rel='stylesheet', href='/assets/stylesheets/style.css')
+    link(rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.13.0/css/all.min.css')
+    meta(name="viewport", content="width=device-width", initial-scale="1")
+  body
+    .site-main
+      nav.navbar(role='navigation' aria-label='main navigation')
+        .navbar-brand
+          a.navbar-item(href="/")
+            img(src='/assets/images/logo_transparent.png')
+          a.navbar-burger.burger(role='button' aria-label='menu' aria-expanded='false' data-target='navbarBasicExample')
+            span(aria-hidden='true')
+            span(aria-hidden='true')
+            span(aria-hidden='true')
+        #navbarBasicExample.navbar-menu
+          .navbar-start
+
+      .site-content
+        block content
+
+    footer.footer
+      .made-with
+        p
+          | Video chat powered by 
+          a(href="https://www.matthewmarkgraaff.com")
+            | Matthew Markgraaff

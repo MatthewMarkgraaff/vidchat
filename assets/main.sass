@@ -1,0 +1,27 @@
+@charset "utf-8"
+
+@import url('https://fonts.googleapis.com/css?family=Montserrat:wght@100;300;400;500;700;900|Roboto:wght@100;300;400;500;700;900&display=swap');
+
+@import "./01-tools/reset"
+@import "./01-tools/responsive"
+
+@import "./02-components/navbar"
+
+@import "../node_modules/bulma/sass/utilities/initial-variables"
+@import "../node_modules/bulma/sass/utilities/functions"
+
+$royal-blue: #324E7C
+$primary: $royal-blue
+
+$family-serif: 'Roboto', sans-serif
+$family-second: 'Montserrat', sans-serif
+$family-primary: $family-serif
+$family-secondary: $family-second
+
+@import "../node_modules/bulma/bulma"
+
+body .site-main
+  min-height: 100%
+
+.site-content
+  padding: 1rem

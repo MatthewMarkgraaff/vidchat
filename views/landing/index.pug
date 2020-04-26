@@ -1,0 +1,36 @@
+extends layout
+
+block content
+  section.hero.is-light.is-fullheight
+    .hero-head
+      header.navbar
+        .container
+          .navbar-brand
+            a.navbar-item
+              img.logo(src='/assets/images/logo_transparent.png' alt="logo")
+            span.navbar-burger.burger(data-target='navbarMenuHeroC')
+              span
+              span
+              span
+          #navbarMenuHeroC.navbar-menu
+            .navbar-end
+              a.navbar-item.is-active
+                | Home
+              a.navbar-item
+                | Privacy
+              span.navbar-item
+                a.button.is-success.is-inverted(href="/call")
+                  span.icon
+                    i.fa.fab.fa-video
+                  span Start a video call
+
+    .hero-body
+      .container.has-text-centered
+        h1.title
+          | Discourse video chat
+        h2.subtitle
+          | South African peer to peer video chats
+        a.button.is-success.is-inverted(href="/call")
+          span.icon
+            i.fa.fab.fa-video
+          span Start a video call

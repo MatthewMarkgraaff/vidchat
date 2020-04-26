@@ -1,13 +1,28 @@
 const Koa = require('koa');
 const app = new Koa();
-const serve = require('koa-static');
-const path = require('path');
-
+const views = require('koa-views');
+const callApp = require('./static');
+const staticAssets = require('./serveAssets');
+const mount = require('koa-mount');
 const cors = require('@koa/cors');
+const { landingRoutes } = require('./controllers');
+
+app.use(views(__dirname + '/views', {
+  map: {
+    html: 'pug'
+  },
+  extension: 'pug',
+  options: {
+    basedir: require('path').join(__dirname + '/views')
+  }
+}));
 
 app.use(cors());
 
-app.use(serve(path.join(__dirname, "./client/public/"), {}));
+app.use(mount('/call', callApp));
+app.use(mount('/assets', staticAssets));
+
+app.use(landingRoutes);
 
 const server = require('http').createServer(app.callback())
 const io = require('socket.io')(server)

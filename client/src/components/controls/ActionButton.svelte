@@ -11,7 +11,7 @@
 
 <main>
   <button class="button action-button" on:click={handleOnClick}>
-    <img src={ "/images/icons/" + (onState ? onIcon : offIcon) }>
+    <img src={ "/call/images/icons/" + (onState ? onIcon : offIcon) }>
   </button>
 </main>
 
