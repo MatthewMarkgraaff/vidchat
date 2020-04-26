@@ -64,4 +64,4 @@ io.on('connection', function(socket){
 
 });
 
-server.listen(4000);
+server.listen(process.env.PORT || 4000);
