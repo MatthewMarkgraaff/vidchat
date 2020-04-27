@@ -18,11 +18,6 @@ block content
                 | Home
               a.navbar-item
                 | Privacy
-              span.navbar-item
-                a.button.is-success.is-inverted(href="/call")
-                  span.icon
-                    i.fa.fab.fa-video
-                  span Start a video call
 
     .hero-body
       .container.has-text-centered
@@ -30,7 +25,37 @@ block content
           | Discourse video chat
         h2.subtitle
           | South African peer to peer video chats
-        a.button.is-success.is-inverted(href="/call")
-          span.icon
-            i.fa.fab.fa-video
-          span Start a video call
+        .actions#start-call-actions
+          a.button.is-success.is-inverted(href=`/call/${uuid}`)
+            span.icon
+              i.fa.fab.fa-video
+            span Start a video call
+          a#with-password-btn.button.is-success.is-inverted(href='#')
+            span.icon
+              i.fa.fab.fa-lock
+            span Setup password protected call
+        .actions
+          #password-form.is-hidden
+            a.button#back(href="#")
+              | back
+            form
+              p.control.has-icons-left
+                input.input(type='password' placeholder='Password')
+                span.icon.is-small.is-left
+                  i.fas.fa-lock
+                button.button.is-success.is-inverted
+                  | Start call
+
+  script.
+    var passwordButton = document.getElementById("with-password-btn");
+    var backButton = document.getElementById("back");
+
+    passwordButton.addEventListener("click", togglePasswordFormVisible);
+    backButton.addEventListener("click", togglePasswordFormVisible);
+
+    function togglePasswordFormVisible(e) {
+      var passwordForm = document.getElementById("password-form");
+      var startCallActions = document.getElementById("start-call-actions");
+      passwordForm.classList.toggle("is-hidden");
+      startCallActions.classList.toggle("is-hidden");
+    }

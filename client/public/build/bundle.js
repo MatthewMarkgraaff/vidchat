@@ -12669,17 +12669,106 @@ var app = (function () {
     var lib_4 = lib$1.Manager;
     var lib_5 = lib$1.Socket;
 
-    const configuration = {
+    const subscriber_queue = [];
+    /**
+     * Create a `Writable` store that allows both updating and reading by subscription.
+     * @param {*=}value initial value
+     * @param {StartStopNotifier=}start start and stop notifications for subscriptions
+     */
+    function writable(value, start = noop) {
+        let stop;
+        const subscribers = [];
+        function set(new_value) {
+            if (safe_not_equal(value, new_value)) {
+                value = new_value;
+                if (stop) { // store is ready
+                    const run_queue = !subscriber_queue.length;
+                    for (let i = 0; i < subscribers.length; i += 1) {
+                        const s = subscribers[i];
+                        s[1]();
+                        subscriber_queue.push(s, value);
+                    }
+                    if (run_queue) {
+                        for (let i = 0; i < subscriber_queue.length; i += 2) {
+                            subscriber_queue[i][0](subscriber_queue[i + 1]);
+                        }
+                        subscriber_queue.length = 0;
+                    }
+                }
+            }
+        }
+        function update(fn) {
+            set(fn(value));
+        }
+        function subscribe(run, invalidate = noop) {
+            const subscriber = [run, invalidate];
+            subscribers.push(subscriber);
+            if (subscribers.length === 1) {
+                stop = start(set) || noop;
+            }
+            run(value);
+            return () => {
+                const index = subscribers.indexOf(subscriber);
+                if (index !== -1) {
+                    subscribers.splice(index, 1);
+                }
+                if (subscribers.length === 0) {
+                    stop();
+                    stop = null;
+                }
+            };
+        }
+        return { set, update, subscribe };
+    }
+
+    let audio = writable(true);
+    let video = writable(true);
+
+    const setAudio = (audioStreamable) => audio.set(audioStreamable);
+
+    const setVideo = (videoStreamable) => video.set(videoStreamable);
+
+    var callerState = {
+      audio,
+      video,
+      setAudio,
+      setVideo
+    };
+
+    let configuration = {
       iceServers: [{
         urls: 'stun:stun.l.google.com:19302'
       }]
     };
 
+    let localStream;
     let socket$2;
     let peerConnection;
+    let room;
 
+    if(callerState.audio) {
+      callerState.audio.subscribe(value =>{
+        if(localStream) {
+          localStream.getAudioTracks()[0].enabled = value;
+        }
+      });
+    }
 
-    async function newCallController(room) {
+    if(callerState.video) {
+      callerState.video.subscribe(value =>{
+        if(localStream) {
+          localStream.getVideoTracks()[0].enabled = value;
+        }
+      });
+    }
+
+    async function newCallController(roomHash, options = {}) {
+      room = roomHash;
+
+      if(options.turnServerConfig) {
+        configuration.iceServers = options.turnServerConfig.iceServers;
+      }
+
       socket$2 = lib$1.connect();
 
       console.log("creating or joining room: " + room);
@@ -12694,6 +12783,12 @@ var app = (function () {
       });
 
       socket$2.on(socketActions.joined, (room)=>{
+        console.log(socket$2);
+        console.log("someone joined the room");
+      });
+
+      socket$2.on(socketActions.joined, (room)=>{
+        console.log(socket$2);
         console.log("someone joined the room");
       });
 
@@ -12702,7 +12797,6 @@ var app = (function () {
 
     function startWebRTC(isOfferer) {
       peerConnection = new RTCPeerConnection(configuration);
-
       // 'onicecandidate' notifies us whenever an ICE agent needs to deliver a
       // message to the other peer through the signaling server
       peerConnection.onicecandidate = event => {
@@ -12731,22 +12825,16 @@ var app = (function () {
         audio: true,
         video: true,
       }).then(stream => {
+        localStream = stream;
         // Display your local video in #localVideo element
         const localVideo = document.getElementById('localVideo');
         localVideo.srcObject = stream;
+        localVideo.muted = true;
         // Add your stream to be sent to the conneting peer
         stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
       }, onError);
 
-      // Listen to signaling data from Scaledrone
       socket$2.on('message', (message, client) => {
-        // Message was sent by us
-        /*
-        if (client.id === drone.clientId) {
-          return;
-        }
-        */
-
         if (message.sdp) {
           // This is called after receiving an offer or answer from another peer
           peerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp), () => {
@@ -12777,7 +12865,8 @@ var app = (function () {
     }
     function onSuccess() {}
     function sendMessage(message) {
-      console.log('Client sending message: ', message);
+      console.log(socket$2.id);
+      message.room = room;
       socket$2.emit(
         socketActions.message,
         message,
@@ -12785,6 +12874,8 @@ var app = (function () {
     }
 
     const socketActions = {
+      connection: 'connection',
+      disconnect: 'disconnect',
       createOrJoin: "create or join",
       created: "created",
       join: "join",
@@ -12800,7 +12891,7 @@ var app = (function () {
     function add_css() {
     	var style = element("style");
     	style.id = "svelte-13qlzmu-style";
-    	style.textContent = ".action-button.svelte-13qlzmu{border-radius:50%;padding:8px}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiQWN0aW9uQnV0dG9uLnN2ZWx0ZSIsInNvdXJjZXMiOlsiQWN0aW9uQnV0dG9uLnN2ZWx0ZSJdLCJzb3VyY2VzQ29udGVudCI6WyI8c2NyaXB0PlxuICBleHBvcnQgbGV0IG9uSWNvbjtcbiAgZXhwb3J0IGxldCBvZmZJY29uO1xuICBleHBvcnQgbGV0IG9uU3RhdGUgPSB0cnVlO1xuXG4gIGZ1bmN0aW9uIGhhbmRsZU9uQ2xpY2soKSB7XG4gICAgaWYob25JY29uICYmIG9mZkljb24pXG4gICAgICBvblN0YXRlID0gIW9uU3RhdGU7XG4gIH1cbjwvc2NyaXB0PlxuXG48bWFpbj5cbiAgPGJ1dHRvbiBjbGFzcz1cImJ1dHRvbiBhY3Rpb24tYnV0dG9uXCIgb246Y2xpY2s9e2hhbmRsZU9uQ2xpY2t9PlxuICAgIDxpbWcgc3JjPXsgXCIvY2FsbC9pbWFnZXMvaWNvbnMvXCIgKyAob25TdGF0ZSA/IG9uSWNvbiA6IG9mZkljb24pIH0+XG4gIDwvYnV0dG9uPlxuPC9tYWluPlxuXG48c3R5bGUgbGFuZz1cInNjc3NcIj4uYWN0aW9uLWJ1dHRvbiB7XG4gIGJvcmRlci1yYWRpdXM6IDUwJTtcbiAgcGFkZGluZzogOHB4OyB9XG48L3N0eWxlPlxuIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQWlCbUIsY0FBYyxlQUFDLENBQUMsQUFDakMsYUFBYSxDQUFFLEdBQUcsQ0FDbEIsT0FBTyxDQUFFLEdBQUcsQUFBRSxDQUFDIn0= */";
+    	style.textContent = ".action-button.svelte-13qlzmu{border-radius:50%;padding:8px}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiQWN0aW9uQnV0dG9uLnN2ZWx0ZSIsInNvdXJjZXMiOlsiQWN0aW9uQnV0dG9uLnN2ZWx0ZSJdLCJzb3VyY2VzQ29udGVudCI6WyI8c2NyaXB0PlxuICBleHBvcnQgbGV0IG9uQ2xpY2s7XG4gIGV4cG9ydCBsZXQgb25JY29uO1xuICBleHBvcnQgbGV0IG9mZkljb247XG4gIGV4cG9ydCBsZXQgb25TdGF0ZSA9IHRydWU7XG5cbiAgZnVuY3Rpb24gaGFuZGxlT25DbGljaygpIHtcbiAgICBpZihvbkNsaWNrKSB7XG4gICAgICBvbkNsaWNrKCk7XG4gICAgfVxuICB9XG48L3NjcmlwdD5cblxuPG1haW4+XG4gIDxidXR0b24gY2xhc3M9XCJidXR0b24gYWN0aW9uLWJ1dHRvblwiIG9uOmNsaWNrPXtoYW5kbGVPbkNsaWNrfT5cbiAgICA8aW1nIHNyYz17IFwiL2NhbGwvaW1hZ2VzL2ljb25zL1wiICsgKG9uU3RhdGUgPyBvbkljb24gOiBvZmZJY29uKSB9PlxuICA8L2J1dHRvbj5cbjwvbWFpbj5cblxuPHN0eWxlIGxhbmc9XCJzY3NzXCI+LmFjdGlvbi1idXR0b24ge1xuICBib3JkZXItcmFkaXVzOiA1MCU7XG4gIHBhZGRpbmc6IDhweDsgfVxuPC9zdHlsZT5cbiJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFtQm1CLGNBQWMsZUFBQyxDQUFDLEFBQ2pDLGFBQWEsQ0FBRSxHQUFHLENBQ2xCLE9BQU8sQ0FBRSxHQUFHLEFBQUUsQ0FBQyJ9 */";
     	append_dev(document.head, style);
     }
 
@@ -12817,14 +12908,14 @@ var app = (function () {
     			button = element("button");
     			img = element("img");
 
-    			if (img.src !== (img_src_value = "/call/images/icons/" + (/*onState*/ ctx[0]
-    			? /*onIcon*/ ctx[1]
-    			: /*offIcon*/ ctx[2]))) attr_dev(img, "src", img_src_value);
+    			if (img.src !== (img_src_value = "/call/images/icons/" + (/*onState*/ ctx[2]
+    			? /*onIcon*/ ctx[0]
+    			: /*offIcon*/ ctx[1]))) attr_dev(img, "src", img_src_value);
 
-    			add_location(img, file, 13, 4, 254);
+    			add_location(img, file, 15, 4, 265);
     			attr_dev(button, "class", "button action-button svelte-13qlzmu");
-    			add_location(button, file, 12, 2, 187);
-    			add_location(main, file, 11, 0, 178);
+    			add_location(button, file, 14, 2, 198);
+    			add_location(main, file, 13, 0, 189);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -12837,9 +12928,9 @@ var app = (function () {
     			dispose = listen_dev(button, "click", /*handleOnClick*/ ctx[3], false, false, false);
     		},
     		p: function update(ctx, [dirty]) {
-    			if (dirty & /*onState, onIcon, offIcon*/ 7 && img.src !== (img_src_value = "/call/images/icons/" + (/*onState*/ ctx[0]
-    			? /*onIcon*/ ctx[1]
-    			: /*offIcon*/ ctx[2]))) {
+    			if (dirty & /*onState, onIcon, offIcon*/ 7 && img.src !== (img_src_value = "/call/images/icons/" + (/*onState*/ ctx[2]
+    			? /*onIcon*/ ctx[0]
+    			: /*offIcon*/ ctx[1]))) {
     				attr_dev(img, "src", img_src_value);
     			}
     		},
@@ -12863,15 +12954,18 @@ var app = (function () {
     }
 
     function instance($$self, $$props, $$invalidate) {
+    	let { onClick } = $$props;
     	let { onIcon } = $$props;
     	let { offIcon } = $$props;
     	let { onState = true } = $$props;
 
     	function handleOnClick() {
-    		if (onIcon && offIcon) $$invalidate(0, onState = !onState);
+    		if (onClick) {
+    			onClick();
+    		}
     	}
 
-    	const writable_props = ["onIcon", "offIcon", "onState"];
+    	const writable_props = ["onClick", "onIcon", "offIcon", "onState"];
 
     	Object.keys($$props).forEach(key => {
     		if (!~writable_props.indexOf(key) && key.slice(0, 2) !== "$$") console.warn(`<ActionButton> was created with unknown prop '${key}'`);
@@ -12881,31 +12975,45 @@ var app = (function () {
     	validate_slots("ActionButton", $$slots, []);
 
     	$$self.$set = $$props => {
-    		if ("onIcon" in $$props) $$invalidate(1, onIcon = $$props.onIcon);
-    		if ("offIcon" in $$props) $$invalidate(2, offIcon = $$props.offIcon);
-    		if ("onState" in $$props) $$invalidate(0, onState = $$props.onState);
+    		if ("onClick" in $$props) $$invalidate(4, onClick = $$props.onClick);
+    		if ("onIcon" in $$props) $$invalidate(0, onIcon = $$props.onIcon);
+    		if ("offIcon" in $$props) $$invalidate(1, offIcon = $$props.offIcon);
+    		if ("onState" in $$props) $$invalidate(2, onState = $$props.onState);
     	};
 
-    	$$self.$capture_state = () => ({ onIcon, offIcon, onState, handleOnClick });
+    	$$self.$capture_state = () => ({
+    		onClick,
+    		onIcon,
+    		offIcon,
+    		onState,
+    		handleOnClick
+    	});
 
     	$$self.$inject_state = $$props => {
-    		if ("onIcon" in $$props) $$invalidate(1, onIcon = $$props.onIcon);
-    		if ("offIcon" in $$props) $$invalidate(2, offIcon = $$props.offIcon);
-    		if ("onState" in $$props) $$invalidate(0, onState = $$props.onState);
+    		if ("onClick" in $$props) $$invalidate(4, onClick = $$props.onClick);
+    		if ("onIcon" in $$props) $$invalidate(0, onIcon = $$props.onIcon);
+    		if ("offIcon" in $$props) $$invalidate(1, offIcon = $$props.offIcon);
+    		if ("onState" in $$props) $$invalidate(2, onState = $$props.onState);
     	};
 
     	if ($$props && "$$inject" in $$props) {
     		$$self.$inject_state($$props.$$inject);
     	}
 
-    	return [onState, onIcon, offIcon, handleOnClick];
+    	return [onIcon, offIcon, onState, handleOnClick, onClick];
     }
 
     class ActionButton extends SvelteComponentDev {
     	constructor(options) {
     		super(options);
     		if (!document.getElementById("svelte-13qlzmu-style")) add_css();
-    		init(this, options, instance, create_fragment, safe_not_equal, { onIcon: 1, offIcon: 2, onState: 0 });
+
+    		init(this, options, instance, create_fragment, safe_not_equal, {
+    			onClick: 4,
+    			onIcon: 0,
+    			offIcon: 1,
+    			onState: 2
+    		});
 
     		dispatch_dev("SvelteRegisterComponent", {
     			component: this,
@@ -12917,13 +13025,25 @@ var app = (function () {
     		const { ctx } = this.$$;
     		const props = options.props || {};
 
-    		if (/*onIcon*/ ctx[1] === undefined && !("onIcon" in props)) {
+    		if (/*onClick*/ ctx[4] === undefined && !("onClick" in props)) {
+    			console.warn("<ActionButton> was created without expected prop 'onClick'");
+    		}
+
+    		if (/*onIcon*/ ctx[0] === undefined && !("onIcon" in props)) {
     			console.warn("<ActionButton> was created without expected prop 'onIcon'");
     		}
 
-    		if (/*offIcon*/ ctx[2] === undefined && !("offIcon" in props)) {
+    		if (/*offIcon*/ ctx[1] === undefined && !("offIcon" in props)) {
     			console.warn("<ActionButton> was created without expected prop 'offIcon'");
     		}
+    	}
+
+    	get onClick() {
+    		throw new Error("<ActionButton>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	set onClick(value) {
+    		throw new Error("<ActionButton>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
     	}
 
     	get onIcon() {
@@ -12957,7 +13077,7 @@ var app = (function () {
     function add_css$1() {
     	var style = element("style");
     	style.id = "svelte-12lv1r6-style";
-    	style.textContent = ".controls.svelte-12lv1r6{position:fixed;bottom:5%;left:0;right:0;display:flex;justify-content:center}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiQ29udHJvbHMuc3ZlbHRlIiwic291cmNlcyI6WyJDb250cm9scy5zdmVsdGUiXSwic291cmNlc0NvbnRlbnQiOlsiPHNjcmlwdD5cbiAgaW1wb3J0IEFjdGlvbkJ1dHRvbiBmcm9tIFwiLi9BY3Rpb25CdXR0b24uc3ZlbHRlXCI7XG48L3NjcmlwdD5cblxuPG1haW4+XG4gIDxkaXYgY2xhc3M9XCJjb250cm9sc1wiPlxuICAgIDxBY3Rpb25CdXR0b24gb25JY29uPVwibWljLnN2Z1wiIG9mZkljb249XCJtaWMtb2ZmLnN2Z1wiIC8+XG4gICAgPEFjdGlvbkJ1dHRvbiBvbkljb249XCJwaG9uZS5zdmdcIiAvPlxuICAgIDxBY3Rpb25CdXR0b24gb25JY29uPVwidmlkZW8uc3ZnXCIgb2ZmSWNvbj1cInZpZGVvLW9mZi5zdmdcIiAvPlxuICA8L2Rpdj5cbjwvbWFpbj5cblxuPHN0eWxlIGxhbmc9XCJzY3NzXCI+LmNvbnRyb2xzIHtcbiAgcG9zaXRpb246IGZpeGVkO1xuICBib3R0b206IDUlO1xuICBsZWZ0OiAwO1xuICByaWdodDogMDtcbiAgZGlzcGxheTogZmxleDtcbiAganVzdGlmeS1jb250ZW50OiBjZW50ZXI7IH1cbjwvc3R5bGU+XG4iXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBWW1CLFNBQVMsZUFBQyxDQUFDLEFBQzVCLFFBQVEsQ0FBRSxLQUFLLENBQ2YsTUFBTSxDQUFFLEVBQUUsQ0FDVixJQUFJLENBQUUsQ0FBQyxDQUNQLEtBQUssQ0FBRSxDQUFDLENBQ1IsT0FBTyxDQUFFLElBQUksQ0FDYixlQUFlLENBQUUsTUFBTSxBQUFFLENBQUMifQ== */";
+    	style.textContent = ".controls.svelte-12lv1r6{position:fixed;bottom:5%;left:0;right:0;display:flex;justify-content:center}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiQ29udHJvbHMuc3ZlbHRlIiwic291cmNlcyI6WyJDb250cm9scy5zdmVsdGUiXSwic291cmNlc0NvbnRlbnQiOlsiPHNjcmlwdD5cbiAgaW1wb3J0IEFjdGlvbkJ1dHRvbiBmcm9tIFwiLi9BY3Rpb25CdXR0b24uc3ZlbHRlXCI7XG4gIGltcG9ydCBjYWxsZXJTdGF0ZSBmcm9tIFwiLi4vLi4vc3RvcmUvY2FsbGVyU3RhdGVcIjtcblxuICBsZXQgYXVkaW8gPSB0cnVlO1xuICBsZXQgdmlkZW8gPSB0cnVlO1xuXG4gIGNhbGxlclN0YXRlLmF1ZGlvLnN1YnNjcmliZSh2YWx1ZSA9PiBhdWRpbyA9IHZhbHVlKTtcbiAgY2FsbGVyU3RhdGUudmlkZW8uc3Vic2NyaWJlKHZhbHVlID0+IHZpZGVvID0gdmFsdWUpO1xuPC9zY3JpcHQ+XG5cbjxtYWluPlxuICA8ZGl2IGNsYXNzPVwiY29udHJvbHNcIj5cbiAgICA8QWN0aW9uQnV0dG9uXG4gICAgICBvbkNsaWNrPXsoKT0+Y2FsbGVyU3RhdGUuc2V0QXVkaW8oIWF1ZGlvKX1cbiAgICAgIG9uU3RhdGU9e2F1ZGlvfVxuICAgICAgb25JY29uPVwibWljLnN2Z1wiXG4gICAgICBvZmZJY29uPVwibWljLW9mZi5zdmdcIiAvPlxuICAgIDxBY3Rpb25CdXR0b25cbiAgICAgIG9uSWNvbj1cInBob25lLnN2Z1wiIC8+XG4gICAgPEFjdGlvbkJ1dHRvblxuICAgICAgb25DbGljaz17KCk9PmNhbGxlclN0YXRlLnNldFZpZGVvKCF2aWRlbyl9XG4gICAgICBvblN0YXRlPXt2aWRlb31cbiAgICAgIG9uSWNvbj1cInZpZGVvLnN2Z1wiXG4gICAgICBvZmZJY29uPVwidmlkZW8tb2ZmLnN2Z1wiIC8+XG4gIDwvZGl2PlxuPC9tYWluPlxuXG48c3R5bGUgbGFuZz1cInNjc3NcIj4uY29udHJvbHMge1xuICBwb3NpdGlvbjogZml4ZWQ7XG4gIGJvdHRvbTogNSU7XG4gIGxlZnQ6IDA7XG4gIHJpZ2h0OiAwO1xuICBkaXNwbGF5OiBmbGV4O1xuICBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjsgfVxuPC9zdHlsZT5cbiJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUE0Qm1CLFNBQVMsZUFBQyxDQUFDLEFBQzVCLFFBQVEsQ0FBRSxLQUFLLENBQ2YsTUFBTSxDQUFFLEVBQUUsQ0FDVixJQUFJLENBQUUsQ0FBQyxDQUNQLEtBQUssQ0FBRSxDQUFDLENBQ1IsT0FBTyxDQUFFLElBQUksQ0FDYixlQUFlLENBQUUsTUFBTSxBQUFFLENBQUMifQ== */";
     	append_dev(document.head, style);
     }
 
@@ -12970,6 +13090,8 @@ var app = (function () {
 
     	const actionbutton0 = new ActionButton({
     			props: {
+    				onClick: /*func*/ ctx[2],
+    				onState: /*audio*/ ctx[0],
     				onIcon: "mic.svg",
     				offIcon: "mic-off.svg"
     			},
@@ -12983,6 +13105,8 @@ var app = (function () {
 
     	const actionbutton2 = new ActionButton({
     			props: {
+    				onClick: /*func_1*/ ctx[3],
+    				onState: /*video*/ ctx[1],
     				onIcon: "video.svg",
     				offIcon: "video-off.svg"
     			},
@@ -12999,8 +13123,8 @@ var app = (function () {
     			t1 = space();
     			create_component(actionbutton2.$$.fragment);
     			attr_dev(div, "class", "controls svelte-12lv1r6");
-    			add_location(div, file$1, 5, 2, 81);
-    			add_location(main, file$1, 4, 0, 72);
+    			add_location(div, file$1, 12, 2, 286);
+    			add_location(main, file$1, 11, 0, 277);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -13015,7 +13139,16 @@ var app = (function () {
     			mount_component(actionbutton2, div, null);
     			current = true;
     		},
-    		p: noop,
+    		p: function update(ctx, [dirty]) {
+    			const actionbutton0_changes = {};
+    			if (dirty & /*audio*/ 1) actionbutton0_changes.onClick = /*func*/ ctx[2];
+    			if (dirty & /*audio*/ 1) actionbutton0_changes.onState = /*audio*/ ctx[0];
+    			actionbutton0.$set(actionbutton0_changes);
+    			const actionbutton2_changes = {};
+    			if (dirty & /*video*/ 2) actionbutton2_changes.onClick = /*func_1*/ ctx[3];
+    			if (dirty & /*video*/ 2) actionbutton2_changes.onState = /*video*/ ctx[1];
+    			actionbutton2.$set(actionbutton2_changes);
+    		},
     		i: function intro(local) {
     			if (current) return;
     			transition_in(actionbutton0.$$.fragment, local);
@@ -13049,6 +13182,10 @@ var app = (function () {
     }
 
     function instance$1($$self, $$props, $$invalidate) {
+    	let audio = true;
+    	let video = true;
+    	callerState.audio.subscribe(value => $$invalidate(0, audio = value));
+    	callerState.video.subscribe(value => $$invalidate(1, video = value));
     	const writable_props = [];
 
     	Object.keys($$props).forEach(key => {
@@ -13057,8 +13194,20 @@ var app = (function () {
 
     	let { $$slots = {}, $$scope } = $$props;
     	validate_slots("Controls", $$slots, []);
-    	$$self.$capture_state = () => ({ ActionButton });
-    	return [];
+    	const func = () => callerState.setAudio(!audio);
+    	const func_1 = () => callerState.setVideo(!video);
+    	$$self.$capture_state = () => ({ ActionButton, callerState, audio, video });
+
+    	$$self.$inject_state = $$props => {
+    		if ("audio" in $$props) $$invalidate(0, audio = $$props.audio);
+    		if ("video" in $$props) $$invalidate(1, video = $$props.video);
+    	};
+
+    	if ($$props && "$$inject" in $$props) {
+    		$$self.$inject_state($$props.$$inject);
+    	}
+
+    	return [audio, video, func, func_1];
     }
 
     class Controls extends SvelteComponentDev {
@@ -13076,13 +13225,1447 @@ var app = (function () {
     	}
     }
 
+    var bind = function bind(fn, thisArg) {
+      return function wrap() {
+        var args = new Array(arguments.length);
+        for (var i = 0; i < args.length; i++) {
+          args[i] = arguments[i];
+        }
+        return fn.apply(thisArg, args);
+      };
+    };
+
+    /*global toString:true*/
+
+    // utils is a library of generic helper functions non-specific to axios
+
+    var toString$3 = Object.prototype.toString;
+
+    /**
+     * Determine if a value is an Array
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is an Array, otherwise false
+     */
+    function isArray(val) {
+      return toString$3.call(val) === '[object Array]';
+    }
+
+    /**
+     * Determine if a value is undefined
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if the value is undefined, otherwise false
+     */
+    function isUndefined(val) {
+      return typeof val === 'undefined';
+    }
+
+    /**
+     * Determine if a value is a Buffer
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is a Buffer, otherwise false
+     */
+    function isBuffer$1(val) {
+      return val !== null && !isUndefined(val) && val.constructor !== null && !isUndefined(val.constructor)
+        && typeof val.constructor.isBuffer === 'function' && val.constructor.isBuffer(val);
+    }
+
+    /**
+     * Determine if a value is an ArrayBuffer
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is an ArrayBuffer, otherwise false
+     */
+    function isArrayBuffer(val) {
+      return toString$3.call(val) === '[object ArrayBuffer]';
+    }
+
+    /**
+     * Determine if a value is a FormData
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is an FormData, otherwise false
+     */
+    function isFormData(val) {
+      return (typeof FormData !== 'undefined') && (val instanceof FormData);
+    }
+
+    /**
+     * Determine if a value is a view on an ArrayBuffer
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is a view on an ArrayBuffer, otherwise false
+     */
+    function isArrayBufferView(val) {
+      var result;
+      if ((typeof ArrayBuffer !== 'undefined') && (ArrayBuffer.isView)) {
+        result = ArrayBuffer.isView(val);
+      } else {
+        result = (val) && (val.buffer) && (val.buffer instanceof ArrayBuffer);
+      }
+      return result;
+    }
+
+    /**
+     * Determine if a value is a String
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is a String, otherwise false
+     */
+    function isString(val) {
+      return typeof val === 'string';
+    }
+
+    /**
+     * Determine if a value is a Number
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is a Number, otherwise false
+     */
+    function isNumber(val) {
+      return typeof val === 'number';
+    }
+
+    /**
+     * Determine if a value is an Object
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is an Object, otherwise false
+     */
+    function isObject$1(val) {
+      return val !== null && typeof val === 'object';
+    }
+
+    /**
+     * Determine if a value is a Date
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is a Date, otherwise false
+     */
+    function isDate(val) {
+      return toString$3.call(val) === '[object Date]';
+    }
+
+    /**
+     * Determine if a value is a File
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is a File, otherwise false
+     */
+    function isFile(val) {
+      return toString$3.call(val) === '[object File]';
+    }
+
+    /**
+     * Determine if a value is a Blob
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is a Blob, otherwise false
+     */
+    function isBlob(val) {
+      return toString$3.call(val) === '[object Blob]';
+    }
+
+    /**
+     * Determine if a value is a Function
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is a Function, otherwise false
+     */
+    function isFunction(val) {
+      return toString$3.call(val) === '[object Function]';
+    }
+
+    /**
+     * Determine if a value is a Stream
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is a Stream, otherwise false
+     */
+    function isStream(val) {
+      return isObject$1(val) && isFunction(val.pipe);
+    }
+
+    /**
+     * Determine if a value is a URLSearchParams object
+     *
+     * @param {Object} val The value to test
+     * @returns {boolean} True if value is a URLSearchParams object, otherwise false
+     */
+    function isURLSearchParams(val) {
+      return typeof URLSearchParams !== 'undefined' && val instanceof URLSearchParams;
+    }
+
+    /**
+     * Trim excess whitespace off the beginning and end of a string
+     *
+     * @param {String} str The String to trim
+     * @returns {String} The String freed of excess whitespace
+     */
+    function trim(str) {
+      return str.replace(/^\s*/, '').replace(/\s*$/, '');
+    }
+
+    /**
+     * Determine if we're running in a standard browser environment
+     *
+     * This allows axios to run in a web worker, and react-native.
+     * Both environments support XMLHttpRequest, but not fully standard globals.
+     *
+     * web workers:
+     *  typeof window -> undefined
+     *  typeof document -> undefined
+     *
+     * react-native:
+     *  navigator.product -> 'ReactNative'
+     * nativescript
+     *  navigator.product -> 'NativeScript' or 'NS'
+     */
+    function isStandardBrowserEnv() {
+      if (typeof navigator !== 'undefined' && (navigator.product === 'ReactNative' ||
+                                               navigator.product === 'NativeScript' ||
+                                               navigator.product === 'NS')) {
+        return false;
+      }
+      return (
+        typeof window !== 'undefined' &&
+        typeof document !== 'undefined'
+      );
+    }
+
+    /**
+     * Iterate over an Array or an Object invoking a function for each item.
+     *
+     * If `obj` is an Array callback will be called passing
+     * the value, index, and complete array for each item.
+     *
+     * If 'obj' is an Object callback will be called passing
+     * the value, key, and complete object for each property.
+     *
+     * @param {Object|Array} obj The object to iterate
+     * @param {Function} fn The callback to invoke for each item
+     */
+    function forEach(obj, fn) {
+      // Don't bother if no value provided
+      if (obj === null || typeof obj === 'undefined') {
+        return;
+      }
+
+      // Force an array if not already something iterable
+      if (typeof obj !== 'object') {
+        /*eslint no-param-reassign:0*/
+        obj = [obj];
+      }
+
+      if (isArray(obj)) {
+        // Iterate over array values
+        for (var i = 0, l = obj.length; i < l; i++) {
+          fn.call(null, obj[i], i, obj);
+        }
+      } else {
+        // Iterate over object keys
+        for (var key in obj) {
+          if (Object.prototype.hasOwnProperty.call(obj, key)) {
+            fn.call(null, obj[key], key, obj);
+          }
+        }
+      }
+    }
+
+    /**
+     * Accepts varargs expecting each argument to be an object, then
+     * immutably merges the properties of each object and returns result.
+     *
+     * When multiple objects contain the same key the later object in
+     * the arguments list will take precedence.
+     *
+     * Example:
+     *
+     * ```js
+     * var result = merge({foo: 123}, {foo: 456});
+     * console.log(result.foo); // outputs 456
+     * ```
+     *
+     * @param {Object} obj1 Object to merge
+     * @returns {Object} Result of all merge properties
+     */
+    function merge(/* obj1, obj2, obj3, ... */) {
+      var result = {};
+      function assignValue(val, key) {
+        if (typeof result[key] === 'object' && typeof val === 'object') {
+          result[key] = merge(result[key], val);
+        } else {
+          result[key] = val;
+        }
+      }
+
+      for (var i = 0, l = arguments.length; i < l; i++) {
+        forEach(arguments[i], assignValue);
+      }
+      return result;
+    }
+
+    /**
+     * Function equal to merge with the difference being that no reference
+     * to original objects is kept.
+     *
+     * @see merge
+     * @param {Object} obj1 Object to merge
+     * @returns {Object} Result of all merge properties
+     */
+    function deepMerge(/* obj1, obj2, obj3, ... */) {
+      var result = {};
+      function assignValue(val, key) {
+        if (typeof result[key] === 'object' && typeof val === 'object') {
+          result[key] = deepMerge(result[key], val);
+        } else if (typeof val === 'object') {
+          result[key] = deepMerge({}, val);
+        } else {
+          result[key] = val;
+        }
+      }
+
+      for (var i = 0, l = arguments.length; i < l; i++) {
+        forEach(arguments[i], assignValue);
+      }
+      return result;
+    }
+
+    /**
+     * Extends object a by mutably adding to it the properties of object b.
+     *
+     * @param {Object} a The object to be extended
+     * @param {Object} b The object to copy properties from
+     * @param {Object} thisArg The object to bind function to
+     * @return {Object} The resulting value of object a
+     */
+    function extend(a, b, thisArg) {
+      forEach(b, function assignValue(val, key) {
+        if (thisArg && typeof val === 'function') {
+          a[key] = bind(val, thisArg);
+        } else {
+          a[key] = val;
+        }
+      });
+      return a;
+    }
+
+    var utils = {
+      isArray: isArray,
+      isArrayBuffer: isArrayBuffer,
+      isBuffer: isBuffer$1,
+      isFormData: isFormData,
+      isArrayBufferView: isArrayBufferView,
+      isString: isString,
+      isNumber: isNumber,
+      isObject: isObject$1,
+      isUndefined: isUndefined,
+      isDate: isDate,
+      isFile: isFile,
+      isBlob: isBlob,
+      isFunction: isFunction,
+      isStream: isStream,
+      isURLSearchParams: isURLSearchParams,
+      isStandardBrowserEnv: isStandardBrowserEnv,
+      forEach: forEach,
+      merge: merge,
+      deepMerge: deepMerge,
+      extend: extend,
+      trim: trim
+    };
+
+    function encode$2(val) {
+      return encodeURIComponent(val).
+        replace(/%40/gi, '@').
+        replace(/%3A/gi, ':').
+        replace(/%24/g, '$').
+        replace(/%2C/gi, ',').
+        replace(/%20/g, '+').
+        replace(/%5B/gi, '[').
+        replace(/%5D/gi, ']');
+    }
+
+    /**
+     * Build a URL by appending params to the end
+     *
+     * @param {string} url The base of the url (e.g., http://www.google.com)
+     * @param {object} [params] The params to be appended
+     * @returns {string} The formatted url
+     */
+    var buildURL = function buildURL(url, params, paramsSerializer) {
+      /*eslint no-param-reassign:0*/
+      if (!params) {
+        return url;
+      }
+
+      var serializedParams;
+      if (paramsSerializer) {
+        serializedParams = paramsSerializer(params);
+      } else if (utils.isURLSearchParams(params)) {
+        serializedParams = params.toString();
+      } else {
+        var parts = [];
+
+        utils.forEach(params, function serialize(val, key) {
+          if (val === null || typeof val === 'undefined') {
+            return;
+          }
+
+          if (utils.isArray(val)) {
+            key = key + '[]';
+          } else {
+            val = [val];
+          }
+
+          utils.forEach(val, function parseValue(v) {
+            if (utils.isDate(v)) {
+              v = v.toISOString();
+            } else if (utils.isObject(v)) {
+              v = JSON.stringify(v);
+            }
+            parts.push(encode$2(key) + '=' + encode$2(v));
+          });
+        });
+
+        serializedParams = parts.join('&');
+      }
+
+      if (serializedParams) {
+        var hashmarkIndex = url.indexOf('#');
+        if (hashmarkIndex !== -1) {
+          url = url.slice(0, hashmarkIndex);
+        }
+
+        url += (url.indexOf('?') === -1 ? '?' : '&') + serializedParams;
+      }
+
+      return url;
+    };
+
+    function InterceptorManager() {
+      this.handlers = [];
+    }
+
+    /**
+     * Add a new interceptor to the stack
+     *
+     * @param {Function} fulfilled The function to handle `then` for a `Promise`
+     * @param {Function} rejected The function to handle `reject` for a `Promise`
+     *
+     * @return {Number} An ID used to remove interceptor later
+     */
+    InterceptorManager.prototype.use = function use(fulfilled, rejected) {
+      this.handlers.push({
+        fulfilled: fulfilled,
+        rejected: rejected
+      });
+      return this.handlers.length - 1;
+    };
+
+    /**
+     * Remove an interceptor from the stack
+     *
+     * @param {Number} id The ID that was returned by `use`
+     */
+    InterceptorManager.prototype.eject = function eject(id) {
+      if (this.handlers[id]) {
+        this.handlers[id] = null;
+      }
+    };
+
+    /**
+     * Iterate over all the registered interceptors
+     *
+     * This method is particularly useful for skipping over any
+     * interceptors that may have become `null` calling `eject`.
+     *
+     * @param {Function} fn The function to call for each interceptor
+     */
+    InterceptorManager.prototype.forEach = function forEach(fn) {
+      utils.forEach(this.handlers, function forEachHandler(h) {
+        if (h !== null) {
+          fn(h);
+        }
+      });
+    };
+
+    var InterceptorManager_1 = InterceptorManager;
+
+    /**
+     * Transform the data for a request or a response
+     *
+     * @param {Object|String} data The data to be transformed
+     * @param {Array} headers The headers for the request or response
+     * @param {Array|Function} fns A single function or Array of functions
+     * @returns {*} The resulting transformed data
+     */
+    var transformData = function transformData(data, headers, fns) {
+      /*eslint no-param-reassign:0*/
+      utils.forEach(fns, function transform(fn) {
+        data = fn(data, headers);
+      });
+
+      return data;
+    };
+
+    var isCancel = function isCancel(value) {
+      return !!(value && value.__CANCEL__);
+    };
+
+    var normalizeHeaderName = function normalizeHeaderName(headers, normalizedName) {
+      utils.forEach(headers, function processHeader(value, name) {
+        if (name !== normalizedName && name.toUpperCase() === normalizedName.toUpperCase()) {
+          headers[normalizedName] = value;
+          delete headers[name];
+        }
+      });
+    };
+
+    /**
+     * Update an Error with the specified config, error code, and response.
+     *
+     * @param {Error} error The error to update.
+     * @param {Object} config The config.
+     * @param {string} [code] The error code (for example, 'ECONNABORTED').
+     * @param {Object} [request] The request.
+     * @param {Object} [response] The response.
+     * @returns {Error} The error.
+     */
+    var enhanceError = function enhanceError(error, config, code, request, response) {
+      error.config = config;
+      if (code) {
+        error.code = code;
+      }
+
+      error.request = request;
+      error.response = response;
+      error.isAxiosError = true;
+
+      error.toJSON = function() {
+        return {
+          // Standard
+          message: this.message,
+          name: this.name,
+          // Microsoft
+          description: this.description,
+          number: this.number,
+          // Mozilla
+          fileName: this.fileName,
+          lineNumber: this.lineNumber,
+          columnNumber: this.columnNumber,
+          stack: this.stack,
+          // Axios
+          config: this.config,
+          code: this.code
+        };
+      };
+      return error;
+    };
+
+    /**
+     * Create an Error with the specified message, config, error code, request and response.
+     *
+     * @param {string} message The error message.
+     * @param {Object} config The config.
+     * @param {string} [code] The error code (for example, 'ECONNABORTED').
+     * @param {Object} [request] The request.
+     * @param {Object} [response] The response.
+     * @returns {Error} The created error.
+     */
+    var createError = function createError(message, config, code, request, response) {
+      var error = new Error(message);
+      return enhanceError(error, config, code, request, response);
+    };
+
+    /**
+     * Resolve or reject a Promise based on response status.
+     *
+     * @param {Function} resolve A function that resolves the promise.
+     * @param {Function} reject A function that rejects the promise.
+     * @param {object} response The response.
+     */
+    var settle = function settle(resolve, reject, response) {
+      var validateStatus = response.config.validateStatus;
+      if (!validateStatus || validateStatus(response.status)) {
+        resolve(response);
+      } else {
+        reject(createError(
+          'Request failed with status code ' + response.status,
+          response.config,
+          null,
+          response.request,
+          response
+        ));
+      }
+    };
+
+    /**
+     * Determines whether the specified URL is absolute
+     *
+     * @param {string} url The URL to test
+     * @returns {boolean} True if the specified URL is absolute, otherwise false
+     */
+    var isAbsoluteURL = function isAbsoluteURL(url) {
+      // A URL is considered absolute if it begins with "<scheme>://" or "//" (protocol-relative URL).
+      // RFC 3986 defines scheme name as a sequence of characters beginning with a letter and followed
+      // by any combination of letters, digits, plus, period, or hyphen.
+      return /^([a-z][a-z\d\+\-\.]*:)?\/\//i.test(url);
+    };
+
+    /**
+     * Creates a new URL by combining the specified URLs
+     *
+     * @param {string} baseURL The base URL
+     * @param {string} relativeURL The relative URL
+     * @returns {string} The combined URL
+     */
+    var combineURLs = function combineURLs(baseURL, relativeURL) {
+      return relativeURL
+        ? baseURL.replace(/\/+$/, '') + '/' + relativeURL.replace(/^\/+/, '')
+        : baseURL;
+    };
+
+    /**
+     * Creates a new URL by combining the baseURL with the requestedURL,
+     * only when the requestedURL is not already an absolute URL.
+     * If the requestURL is absolute, this function returns the requestedURL untouched.
+     *
+     * @param {string} baseURL The base URL
+     * @param {string} requestedURL Absolute or relative URL to combine
+     * @returns {string} The combined full path
+     */
+    var buildFullPath = function buildFullPath(baseURL, requestedURL) {
+      if (baseURL && !isAbsoluteURL(requestedURL)) {
+        return combineURLs(baseURL, requestedURL);
+      }
+      return requestedURL;
+    };
+
+    // Headers whose duplicates are ignored by node
+    // c.f. https://nodejs.org/api/http.html#http_message_headers
+    var ignoreDuplicateOf = [
+      'age', 'authorization', 'content-length', 'content-type', 'etag',
+      'expires', 'from', 'host', 'if-modified-since', 'if-unmodified-since',
+      'last-modified', 'location', 'max-forwards', 'proxy-authorization',
+      'referer', 'retry-after', 'user-agent'
+    ];
+
+    /**
+     * Parse headers into an object
+     *
+     * ```
+     * Date: Wed, 27 Aug 2014 08:58:49 GMT
+     * Content-Type: application/json
+     * Connection: keep-alive
+     * Transfer-Encoding: chunked
+     * ```
+     *
+     * @param {String} headers Headers needing to be parsed
+     * @returns {Object} Headers parsed into an object
+     */
+    var parseHeaders = function parseHeaders(headers) {
+      var parsed = {};
+      var key;
+      var val;
+      var i;
+
+      if (!headers) { return parsed; }
+
+      utils.forEach(headers.split('\n'), function parser(line) {
+        i = line.indexOf(':');
+        key = utils.trim(line.substr(0, i)).toLowerCase();
+        val = utils.trim(line.substr(i + 1));
+
+        if (key) {
+          if (parsed[key] && ignoreDuplicateOf.indexOf(key) >= 0) {
+            return;
+          }
+          if (key === 'set-cookie') {
+            parsed[key] = (parsed[key] ? parsed[key] : []).concat([val]);
+          } else {
+            parsed[key] = parsed[key] ? parsed[key] + ', ' + val : val;
+          }
+        }
+      });
+
+      return parsed;
+    };
+
+    var isURLSameOrigin = (
+      utils.isStandardBrowserEnv() ?
+
+      // Standard browser envs have full support of the APIs needed to test
+      // whether the request URL is of the same origin as current location.
+        (function standardBrowserEnv() {
+          var msie = /(msie|trident)/i.test(navigator.userAgent);
+          var urlParsingNode = document.createElement('a');
+          var originURL;
+
+          /**
+        * Parse a URL to discover it's components
+        *
+        * @param {String} url The URL to be parsed
+        * @returns {Object}
+        */
+          function resolveURL(url) {
+            var href = url;
+
+            if (msie) {
+            // IE needs attribute set twice to normalize properties
+              urlParsingNode.setAttribute('href', href);
+              href = urlParsingNode.href;
+            }
+
+            urlParsingNode.setAttribute('href', href);
+
+            // urlParsingNode provides the UrlUtils interface - http://url.spec.whatwg.org/#urlutils
+            return {
+              href: urlParsingNode.href,
+              protocol: urlParsingNode.protocol ? urlParsingNode.protocol.replace(/:$/, '') : '',
+              host: urlParsingNode.host,
+              search: urlParsingNode.search ? urlParsingNode.search.replace(/^\?/, '') : '',
+              hash: urlParsingNode.hash ? urlParsingNode.hash.replace(/^#/, '') : '',
+              hostname: urlParsingNode.hostname,
+              port: urlParsingNode.port,
+              pathname: (urlParsingNode.pathname.charAt(0) === '/') ?
+                urlParsingNode.pathname :
+                '/' + urlParsingNode.pathname
+            };
+          }
+
+          originURL = resolveURL(window.location.href);
+
+          /**
+        * Determine if a URL shares the same origin as the current location
+        *
+        * @param {String} requestURL The URL to test
+        * @returns {boolean} True if URL shares the same origin, otherwise false
+        */
+          return function isURLSameOrigin(requestURL) {
+            var parsed = (utils.isString(requestURL)) ? resolveURL(requestURL) : requestURL;
+            return (parsed.protocol === originURL.protocol &&
+                parsed.host === originURL.host);
+          };
+        })() :
+
+      // Non standard browser envs (web workers, react-native) lack needed support.
+        (function nonStandardBrowserEnv() {
+          return function isURLSameOrigin() {
+            return true;
+          };
+        })()
+    );
+
+    var cookies = (
+      utils.isStandardBrowserEnv() ?
+
+      // Standard browser envs support document.cookie
+        (function standardBrowserEnv() {
+          return {
+            write: function write(name, value, expires, path, domain, secure) {
+              var cookie = [];
+              cookie.push(name + '=' + encodeURIComponent(value));
+
+              if (utils.isNumber(expires)) {
+                cookie.push('expires=' + new Date(expires).toGMTString());
+              }
+
+              if (utils.isString(path)) {
+                cookie.push('path=' + path);
+              }
+
+              if (utils.isString(domain)) {
+                cookie.push('domain=' + domain);
+              }
+
+              if (secure === true) {
+                cookie.push('secure');
+              }
+
+              document.cookie = cookie.join('; ');
+            },
+
+            read: function read(name) {
+              var match = document.cookie.match(new RegExp('(^|;\\s*)(' + name + ')=([^;]*)'));
+              return (match ? decodeURIComponent(match[3]) : null);
+            },
+
+            remove: function remove(name) {
+              this.write(name, '', Date.now() - 86400000);
+            }
+          };
+        })() :
+
+      // Non standard browser env (web workers, react-native) lack needed support.
+        (function nonStandardBrowserEnv() {
+          return {
+            write: function write() {},
+            read: function read() { return null; },
+            remove: function remove() {}
+          };
+        })()
+    );
+
+    var xhr = function xhrAdapter(config) {
+      return new Promise(function dispatchXhrRequest(resolve, reject) {
+        var requestData = config.data;
+        var requestHeaders = config.headers;
+
+        if (utils.isFormData(requestData)) {
+          delete requestHeaders['Content-Type']; // Let the browser set it
+        }
+
+        var request = new XMLHttpRequest();
+
+        // HTTP basic authentication
+        if (config.auth) {
+          var username = config.auth.username || '';
+          var password = config.auth.password || '';
+          requestHeaders.Authorization = 'Basic ' + btoa(username + ':' + password);
+        }
+
+        var fullPath = buildFullPath(config.baseURL, config.url);
+        request.open(config.method.toUpperCase(), buildURL(fullPath, config.params, config.paramsSerializer), true);
+
+        // Set the request timeout in MS
+        request.timeout = config.timeout;
+
+        // Listen for ready state
+        request.onreadystatechange = function handleLoad() {
+          if (!request || request.readyState !== 4) {
+            return;
+          }
+
+          // The request errored out and we didn't get a response, this will be
+          // handled by onerror instead
+          // With one exception: request that using file: protocol, most browsers
+          // will return status as 0 even though it's a successful request
+          if (request.status === 0 && !(request.responseURL && request.responseURL.indexOf('file:') === 0)) {
+            return;
+          }
+
+          // Prepare the response
+          var responseHeaders = 'getAllResponseHeaders' in request ? parseHeaders(request.getAllResponseHeaders()) : null;
+          var responseData = !config.responseType || config.responseType === 'text' ? request.responseText : request.response;
+          var response = {
+            data: responseData,
+            status: request.status,
+            statusText: request.statusText,
+            headers: responseHeaders,
+            config: config,
+            request: request
+          };
+
+          settle(resolve, reject, response);
+
+          // Clean up request
+          request = null;
+        };
+
+        // Handle browser request cancellation (as opposed to a manual cancellation)
+        request.onabort = function handleAbort() {
+          if (!request) {
+            return;
+          }
+
+          reject(createError('Request aborted', config, 'ECONNABORTED', request));
+
+          // Clean up request
+          request = null;
+        };
+
+        // Handle low level network errors
+        request.onerror = function handleError() {
+          // Real errors are hidden from us by the browser
+          // onerror should only fire if it's a network error
+          reject(createError('Network Error', config, null, request));
+
+          // Clean up request
+          request = null;
+        };
+
+        // Handle timeout
+        request.ontimeout = function handleTimeout() {
+          var timeoutErrorMessage = 'timeout of ' + config.timeout + 'ms exceeded';
+          if (config.timeoutErrorMessage) {
+            timeoutErrorMessage = config.timeoutErrorMessage;
+          }
+          reject(createError(timeoutErrorMessage, config, 'ECONNABORTED',
+            request));
+
+          // Clean up request
+          request = null;
+        };
+
+        // Add xsrf header
+        // This is only done if running in a standard browser environment.
+        // Specifically not if we're in a web worker, or react-native.
+        if (utils.isStandardBrowserEnv()) {
+          var cookies$1 = cookies;
+
+          // Add xsrf header
+          var xsrfValue = (config.withCredentials || isURLSameOrigin(fullPath)) && config.xsrfCookieName ?
+            cookies$1.read(config.xsrfCookieName) :
+            undefined;
+
+          if (xsrfValue) {
+            requestHeaders[config.xsrfHeaderName] = xsrfValue;
+          }
+        }
+
+        // Add headers to the request
+        if ('setRequestHeader' in request) {
+          utils.forEach(requestHeaders, function setRequestHeader(val, key) {
+            if (typeof requestData === 'undefined' && key.toLowerCase() === 'content-type') {
+              // Remove Content-Type if data is undefined
+              delete requestHeaders[key];
+            } else {
+              // Otherwise add header to the request
+              request.setRequestHeader(key, val);
+            }
+          });
+        }
+
+        // Add withCredentials to request if needed
+        if (!utils.isUndefined(config.withCredentials)) {
+          request.withCredentials = !!config.withCredentials;
+        }
+
+        // Add responseType to request if needed
+        if (config.responseType) {
+          try {
+            request.responseType = config.responseType;
+          } catch (e) {
+            // Expected DOMException thrown by browsers not compatible XMLHttpRequest Level 2.
+            // But, this can be suppressed for 'json' type as it can be parsed by default 'transformResponse' function.
+            if (config.responseType !== 'json') {
+              throw e;
+            }
+          }
+        }
+
+        // Handle progress if needed
+        if (typeof config.onDownloadProgress === 'function') {
+          request.addEventListener('progress', config.onDownloadProgress);
+        }
+
+        // Not all browsers support upload events
+        if (typeof config.onUploadProgress === 'function' && request.upload) {
+          request.upload.addEventListener('progress', config.onUploadProgress);
+        }
+
+        if (config.cancelToken) {
+          // Handle cancellation
+          config.cancelToken.promise.then(function onCanceled(cancel) {
+            if (!request) {
+              return;
+            }
+
+            request.abort();
+            reject(cancel);
+            // Clean up request
+            request = null;
+          });
+        }
+
+        if (requestData === undefined) {
+          requestData = null;
+        }
+
+        // Send the request
+        request.send(requestData);
+      });
+    };
+
+    var DEFAULT_CONTENT_TYPE = {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    };
+
+    function setContentTypeIfUnset(headers, value) {
+      if (!utils.isUndefined(headers) && utils.isUndefined(headers['Content-Type'])) {
+        headers['Content-Type'] = value;
+      }
+    }
+
+    function getDefaultAdapter() {
+      var adapter;
+      if (typeof XMLHttpRequest !== 'undefined') {
+        // For browsers use XHR adapter
+        adapter = xhr;
+      } else if (typeof process !== 'undefined' && Object.prototype.toString.call(process) === '[object process]') {
+        // For node use HTTP adapter
+        adapter = xhr;
+      }
+      return adapter;
+    }
+
+    var defaults = {
+      adapter: getDefaultAdapter(),
+
+      transformRequest: [function transformRequest(data, headers) {
+        normalizeHeaderName(headers, 'Accept');
+        normalizeHeaderName(headers, 'Content-Type');
+        if (utils.isFormData(data) ||
+          utils.isArrayBuffer(data) ||
+          utils.isBuffer(data) ||
+          utils.isStream(data) ||
+          utils.isFile(data) ||
+          utils.isBlob(data)
+        ) {
+          return data;
+        }
+        if (utils.isArrayBufferView(data)) {
+          return data.buffer;
+        }
+        if (utils.isURLSearchParams(data)) {
+          setContentTypeIfUnset(headers, 'application/x-www-form-urlencoded;charset=utf-8');
+          return data.toString();
+        }
+        if (utils.isObject(data)) {
+          setContentTypeIfUnset(headers, 'application/json;charset=utf-8');
+          return JSON.stringify(data);
+        }
+        return data;
+      }],
+
+      transformResponse: [function transformResponse(data) {
+        /*eslint no-param-reassign:0*/
+        if (typeof data === 'string') {
+          try {
+            data = JSON.parse(data);
+          } catch (e) { /* Ignore */ }
+        }
+        return data;
+      }],
+
+      /**
+       * A timeout in milliseconds to abort a request. If set to 0 (default) a
+       * timeout is not created.
+       */
+      timeout: 0,
+
+      xsrfCookieName: 'XSRF-TOKEN',
+      xsrfHeaderName: 'X-XSRF-TOKEN',
+
+      maxContentLength: -1,
+
+      validateStatus: function validateStatus(status) {
+        return status >= 200 && status < 300;
+      }
+    };
+
+    defaults.headers = {
+      common: {
+        'Accept': 'application/json, text/plain, */*'
+      }
+    };
+
+    utils.forEach(['delete', 'get', 'head'], function forEachMethodNoData(method) {
+      defaults.headers[method] = {};
+    });
+
+    utils.forEach(['post', 'put', 'patch'], function forEachMethodWithData(method) {
+      defaults.headers[method] = utils.merge(DEFAULT_CONTENT_TYPE);
+    });
+
+    var defaults_1 = defaults;
+
+    /**
+     * Throws a `Cancel` if cancellation has been requested.
+     */
+    function throwIfCancellationRequested(config) {
+      if (config.cancelToken) {
+        config.cancelToken.throwIfRequested();
+      }
+    }
+
+    /**
+     * Dispatch a request to the server using the configured adapter.
+     *
+     * @param {object} config The config that is to be used for the request
+     * @returns {Promise} The Promise to be fulfilled
+     */
+    var dispatchRequest = function dispatchRequest(config) {
+      throwIfCancellationRequested(config);
+
+      // Ensure headers exist
+      config.headers = config.headers || {};
+
+      // Transform request data
+      config.data = transformData(
+        config.data,
+        config.headers,
+        config.transformRequest
+      );
+
+      // Flatten headers
+      config.headers = utils.merge(
+        config.headers.common || {},
+        config.headers[config.method] || {},
+        config.headers
+      );
+
+      utils.forEach(
+        ['delete', 'get', 'head', 'post', 'put', 'patch', 'common'],
+        function cleanHeaderConfig(method) {
+          delete config.headers[method];
+        }
+      );
+
+      var adapter = config.adapter || defaults_1.adapter;
+
+      return adapter(config).then(function onAdapterResolution(response) {
+        throwIfCancellationRequested(config);
+
+        // Transform response data
+        response.data = transformData(
+          response.data,
+          response.headers,
+          config.transformResponse
+        );
+
+        return response;
+      }, function onAdapterRejection(reason) {
+        if (!isCancel(reason)) {
+          throwIfCancellationRequested(config);
+
+          // Transform response data
+          if (reason && reason.response) {
+            reason.response.data = transformData(
+              reason.response.data,
+              reason.response.headers,
+              config.transformResponse
+            );
+          }
+        }
+
+        return Promise.reject(reason);
+      });
+    };
+
+    /**
+     * Config-specific merge-function which creates a new config-object
+     * by merging two configuration objects together.
+     *
+     * @param {Object} config1
+     * @param {Object} config2
+     * @returns {Object} New object resulting from merging config2 to config1
+     */
+    var mergeConfig = function mergeConfig(config1, config2) {
+      // eslint-disable-next-line no-param-reassign
+      config2 = config2 || {};
+      var config = {};
+
+      var valueFromConfig2Keys = ['url', 'method', 'params', 'data'];
+      var mergeDeepPropertiesKeys = ['headers', 'auth', 'proxy'];
+      var defaultToConfig2Keys = [
+        'baseURL', 'url', 'transformRequest', 'transformResponse', 'paramsSerializer',
+        'timeout', 'withCredentials', 'adapter', 'responseType', 'xsrfCookieName',
+        'xsrfHeaderName', 'onUploadProgress', 'onDownloadProgress',
+        'maxContentLength', 'validateStatus', 'maxRedirects', 'httpAgent',
+        'httpsAgent', 'cancelToken', 'socketPath'
+      ];
+
+      utils.forEach(valueFromConfig2Keys, function valueFromConfig2(prop) {
+        if (typeof config2[prop] !== 'undefined') {
+          config[prop] = config2[prop];
+        }
+      });
+
+      utils.forEach(mergeDeepPropertiesKeys, function mergeDeepProperties(prop) {
+        if (utils.isObject(config2[prop])) {
+          config[prop] = utils.deepMerge(config1[prop], config2[prop]);
+        } else if (typeof config2[prop] !== 'undefined') {
+          config[prop] = config2[prop];
+        } else if (utils.isObject(config1[prop])) {
+          config[prop] = utils.deepMerge(config1[prop]);
+        } else if (typeof config1[prop] !== 'undefined') {
+          config[prop] = config1[prop];
+        }
+      });
+
+      utils.forEach(defaultToConfig2Keys, function defaultToConfig2(prop) {
+        if (typeof config2[prop] !== 'undefined') {
+          config[prop] = config2[prop];
+        } else if (typeof config1[prop] !== 'undefined') {
+          config[prop] = config1[prop];
+        }
+      });
+
+      var axiosKeys = valueFromConfig2Keys
+        .concat(mergeDeepPropertiesKeys)
+        .concat(defaultToConfig2Keys);
+
+      var otherKeys = Object
+        .keys(config2)
+        .filter(function filterAxiosKeys(key) {
+          return axiosKeys.indexOf(key) === -1;
+        });
+
+      utils.forEach(otherKeys, function otherKeysDefaultToConfig2(prop) {
+        if (typeof config2[prop] !== 'undefined') {
+          config[prop] = config2[prop];
+        } else if (typeof config1[prop] !== 'undefined') {
+          config[prop] = config1[prop];
+        }
+      });
+
+      return config;
+    };
+
+    /**
+     * Create a new instance of Axios
+     *
+     * @param {Object} instanceConfig The default config for the instance
+     */
+    function Axios(instanceConfig) {
+      this.defaults = instanceConfig;
+      this.interceptors = {
+        request: new InterceptorManager_1(),
+        response: new InterceptorManager_1()
+      };
+    }
+
+    /**
+     * Dispatch a request
+     *
+     * @param {Object} config The config specific for this request (merged with this.defaults)
+     */
+    Axios.prototype.request = function request(config) {
+      /*eslint no-param-reassign:0*/
+      // Allow for axios('example/url'[, config]) a la fetch API
+      if (typeof config === 'string') {
+        config = arguments[1] || {};
+        config.url = arguments[0];
+      } else {
+        config = config || {};
+      }
+
+      config = mergeConfig(this.defaults, config);
+
+      // Set config.method
+      if (config.method) {
+        config.method = config.method.toLowerCase();
+      } else if (this.defaults.method) {
+        config.method = this.defaults.method.toLowerCase();
+      } else {
+        config.method = 'get';
+      }
+
+      // Hook up interceptors middleware
+      var chain = [dispatchRequest, undefined];
+      var promise = Promise.resolve(config);
+
+      this.interceptors.request.forEach(function unshiftRequestInterceptors(interceptor) {
+        chain.unshift(interceptor.fulfilled, interceptor.rejected);
+      });
+
+      this.interceptors.response.forEach(function pushResponseInterceptors(interceptor) {
+        chain.push(interceptor.fulfilled, interceptor.rejected);
+      });
+
+      while (chain.length) {
+        promise = promise.then(chain.shift(), chain.shift());
+      }
+
+      return promise;
+    };
+
+    Axios.prototype.getUri = function getUri(config) {
+      config = mergeConfig(this.defaults, config);
+      return buildURL(config.url, config.params, config.paramsSerializer).replace(/^\?/, '');
+    };
+
+    // Provide aliases for supported request methods
+    utils.forEach(['delete', 'get', 'head', 'options'], function forEachMethodNoData(method) {
+      /*eslint func-names:0*/
+      Axios.prototype[method] = function(url, config) {
+        return this.request(utils.merge(config || {}, {
+          method: method,
+          url: url
+        }));
+      };
+    });
+
+    utils.forEach(['post', 'put', 'patch'], function forEachMethodWithData(method) {
+      /*eslint func-names:0*/
+      Axios.prototype[method] = function(url, data, config) {
+        return this.request(utils.merge(config || {}, {
+          method: method,
+          url: url,
+          data: data
+        }));
+      };
+    });
+
+    var Axios_1 = Axios;
+
+    /**
+     * A `Cancel` is an object that is thrown when an operation is canceled.
+     *
+     * @class
+     * @param {string=} message The message.
+     */
+    function Cancel(message) {
+      this.message = message;
+    }
+
+    Cancel.prototype.toString = function toString() {
+      return 'Cancel' + (this.message ? ': ' + this.message : '');
+    };
+
+    Cancel.prototype.__CANCEL__ = true;
+
+    var Cancel_1 = Cancel;
+
+    /**
+     * A `CancelToken` is an object that can be used to request cancellation of an operation.
+     *
+     * @class
+     * @param {Function} executor The executor function.
+     */
+    function CancelToken(executor) {
+      if (typeof executor !== 'function') {
+        throw new TypeError('executor must be a function.');
+      }
+
+      var resolvePromise;
+      this.promise = new Promise(function promiseExecutor(resolve) {
+        resolvePromise = resolve;
+      });
+
+      var token = this;
+      executor(function cancel(message) {
+        if (token.reason) {
+          // Cancellation has already been requested
+          return;
+        }
+
+        token.reason = new Cancel_1(message);
+        resolvePromise(token.reason);
+      });
+    }
+
+    /**
+     * Throws a `Cancel` if cancellation has been requested.
+     */
+    CancelToken.prototype.throwIfRequested = function throwIfRequested() {
+      if (this.reason) {
+        throw this.reason;
+      }
+    };
+
+    /**
+     * Returns an object that contains a new `CancelToken` and a function that, when called,
+     * cancels the `CancelToken`.
+     */
+    CancelToken.source = function source() {
+      var cancel;
+      var token = new CancelToken(function executor(c) {
+        cancel = c;
+      });
+      return {
+        token: token,
+        cancel: cancel
+      };
+    };
+
+    var CancelToken_1 = CancelToken;
+
+    /**
+     * Syntactic sugar for invoking a function and expanding an array for arguments.
+     *
+     * Common use case would be to use `Function.prototype.apply`.
+     *
+     *  ```js
+     *  function f(x, y, z) {}
+     *  var args = [1, 2, 3];
+     *  f.apply(null, args);
+     *  ```
+     *
+     * With `spread` this example can be re-written.
+     *
+     *  ```js
+     *  spread(function(x, y, z) {})([1, 2, 3]);
+     *  ```
+     *
+     * @param {Function} callback
+     * @returns {Function}
+     */
+    var spread = function spread(callback) {
+      return function wrap(arr) {
+        return callback.apply(null, arr);
+      };
+    };
+
+    /**
+     * Create an instance of Axios
+     *
+     * @param {Object} defaultConfig The default config for the instance
+     * @return {Axios} A new instance of Axios
+     */
+    function createInstance(defaultConfig) {
+      var context = new Axios_1(defaultConfig);
+      var instance = bind(Axios_1.prototype.request, context);
+
+      // Copy axios.prototype to instance
+      utils.extend(instance, Axios_1.prototype, context);
+
+      // Copy context to instance
+      utils.extend(instance, context);
+
+      return instance;
+    }
+
+    // Create the default instance to be exported
+    var axios = createInstance(defaults_1);
+
+    // Expose Axios class to allow class inheritance
+    axios.Axios = Axios_1;
+
+    // Factory for creating new instances
+    axios.create = function create(instanceConfig) {
+      return createInstance(mergeConfig(axios.defaults, instanceConfig));
+    };
+
+    // Expose Cancel & CancelToken
+    axios.Cancel = Cancel_1;
+    axios.CancelToken = CancelToken_1;
+    axios.isCancel = isCancel;
+
+    // Expose all/spread
+    axios.all = function all(promises) {
+      return Promise.all(promises);
+    };
+    axios.spread = spread;
+
+    var axios_1 = axios;
+
+    // Allow use of default import syntax in TypeScript
+    var default_1 = axios;
+    axios_1.default = default_1;
+
+    var axios$1 = axios_1;
+
+    const fetchTurnServerConfig = async () => {
+      const response = await axios$1.get('/turn-server-config');
+
+      if(response.status == 200) {
+        return response.data;
+      } else {
+        throw new Error("Could not fetch turn server configuration");
+      }
+    };
+
     /* src/App.svelte generated by Svelte v3.20.1 */
     const file$2 = "src/App.svelte";
 
     function add_css$2() {
     	var style = element("style");
-    	style.id = "svelte-1e9puaw-style";
-    	style.textContent = "main.svelte-1e9puaw{text-align:center;padding:1em;max-width:240px;margin:0 auto}@media(min-width: 640px){main.svelte-1e9puaw{max-width:none}}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiQXBwLnN2ZWx0ZSIsInNvdXJjZXMiOlsiQXBwLnN2ZWx0ZSJdLCJzb3VyY2VzQ29udGVudCI6WyI8c2NyaXB0PlxuICBpbXBvcnQgeyBvbk1vdW50IH0gZnJvbSAnc3ZlbHRlJztcbiAgaW1wb3J0IFwiLi4vYXNzZXRzL21haW4uc2Nzc1wiO1xuICBpbXBvcnQgZ2V0TWVkaWEgZnJvbSAnLi91dGlsL2dldE1lZGlhJztcbiAgaW1wb3J0IGFkYXB0ZXIgZnJvbSAnd2VicnRjLWFkYXB0ZXInO1xuICBpbXBvcnQgeyBuZXdDYWxsQ29udHJvbGxlciwgc3RhcnRXZWJSVEMgfSBmcm9tICcuL3V0aWwvbmV3Q2FsbENvbnRyb2xsZXInO1xuXG4gIGltcG9ydCBDb250cm9scyBmcm9tICcuL2NvbXBvbmVudHMvY29udHJvbHMvQ29udHJvbHMuc3ZlbHRlJ1xuXG4gIGNvbnN0IHBhcnRpY2lwYW50cyA9IFtcbiAgICB7IGlkOiAxLCBuYW1lOiBcIm1hdHRoZXdcIiB9XG4gIF07XG5cbiAgb25Nb3VudChhc3luYyAoKT0+e1xuICAgIGlmICghbG9jYXRpb24uaGFzaCkge1xuICAgICAgbG9jYXRpb24uaGFzaCA9IE1hdGguZmxvb3IoTWF0aC5yYW5kb20oKSAqIDB4RkZGRkZGKS50b1N0cmluZygxNik7XG4gICAgfVxuXG4gICAgY29uc3Qgcm9vbUhhc2ggPSBsb2NhdGlvbi5oYXNoLnN1YnN0cmluZygxKTtcbiAgICBuZXdDYWxsQ29udHJvbGxlcihyb29tSGFzaCk7XG4gIH0pO1xuXG4gIGV4cG9ydCBsZXQgbmFtZTtcbjwvc2NyaXB0PlxuXG48bWFpbiBpZD1cInZpZGVvLWNvbnRhaW5lclwiPlxuICA8dmlkZW8gaWQ9XCJsb2NhbFZpZGVvXCIgYXV0b3BsYXkgcGxheXNpbmxpbmU+PC92aWRlbz5cbiAgPHZpZGVvIGlkPVwicmVtb3RlVmlkZW9cIiBhdXRvcGxheSBwbGF5c2lubGluZT48L3ZpZGVvPlxuICA8Q29udHJvbHMgLz5cbjwvbWFpbj5cblxuPHN0eWxlPlxuICBtYWluIHtcbiAgICB0ZXh0LWFsaWduOiBjZW50ZXI7XG4gICAgcGFkZGluZzogMWVtO1xuICAgIG1heC13aWR0aDogMjQwcHg7XG4gICAgbWFyZ2luOiAwIGF1dG87XG4gIH1cblxuICBoMSB7XG4gICAgY29sb3I6ICNmZjNlMDA7XG4gICAgdGV4dC10cmFuc2Zvcm06IHVwcGVyY2FzZTtcbiAgICBmb250LXNpemU6IDRlbTtcbiAgICBmb250LXdlaWdodDogMTAwO1xuICB9XG5cbiAgQG1lZGlhIChtaW4td2lkdGg6IDY0MHB4KSB7XG4gICAgbWFpbiB7XG4gICAgICBtYXgtd2lkdGg6IG5vbmU7XG4gICAgfVxuICB9XG48L3N0eWxlPlxuIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQWdDRSxJQUFJLGVBQUMsQ0FBQyxBQUNKLFVBQVUsQ0FBRSxNQUFNLENBQ2xCLE9BQU8sQ0FBRSxHQUFHLENBQ1osU0FBUyxDQUFFLEtBQUssQ0FDaEIsTUFBTSxDQUFFLENBQUMsQ0FBQyxJQUFJLEFBQ2hCLENBQUMsQUFTRCxNQUFNLEFBQUMsWUFBWSxLQUFLLENBQUMsQUFBQyxDQUFDLEFBQ3pCLElBQUksZUFBQyxDQUFDLEFBQ0osU0FBUyxDQUFFLElBQUksQUFDakIsQ0FBQyxBQUNILENBQUMifQ== */";
+    	style.id = "svelte-klxn6w-style";
+    	style.textContent = "main.svelte-klxn6w{max-width:240px}.full-screen-video.svelte-klxn6w{position:fixed;top:0;right:0;left:0;bottom:0;height:100%;width:100%}.secondary-video.svelte-klxn6w{position:fixed;bottom:40px;right:40px;width:15%;height:15%}@media(min-width: 640px){main.svelte-klxn6w{max-width:none}}\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiQXBwLnN2ZWx0ZSIsInNvdXJjZXMiOlsiQXBwLnN2ZWx0ZSJdLCJzb3VyY2VzQ29udGVudCI6WyI8c2NyaXB0PlxuICBpbXBvcnQgeyBvbk1vdW50IH0gZnJvbSAnc3ZlbHRlJztcbiAgaW1wb3J0IFwiLi4vYXNzZXRzL21haW4uc2Nzc1wiO1xuICBpbXBvcnQgZ2V0TWVkaWEgZnJvbSAnLi91dGlsL2dldE1lZGlhJztcbiAgaW1wb3J0IGFkYXB0ZXIgZnJvbSAnd2VicnRjLWFkYXB0ZXInO1xuICBpbXBvcnQgeyBuZXdDYWxsQ29udHJvbGxlciB9IGZyb20gJy4vdXRpbC9uZXdDYWxsQ29udHJvbGxlcic7XG4gIGltcG9ydCBjYWxsZXJTdGF0ZSBmcm9tICcuL3N0b3JlL2NhbGxlclN0YXRlJztcblxuICBpbXBvcnQgQ29udHJvbHMgZnJvbSAnLi9jb21wb25lbnRzL2NvbnRyb2xzL0NvbnRyb2xzLnN2ZWx0ZSdcbiAgaW1wb3J0IHsgZmV0Y2hUdXJuU2VydmVyQ29uZmlnIH0gZnJvbSAnLi91dGlsL2FwaUNsaWVudCc7XG5cbiAgb25Nb3VudChhc3luYyAoKT0+e1xuICAgIGlmICghbG9jYXRpb24uaGFzaCkge1xuICAgICAgbG9jYXRpb24uaGFzaCA9IE1hdGguZmxvb3IoTWF0aC5yYW5kb20oKSAqIDB4RkZGRkZGKS50b1N0cmluZygxNik7XG4gICAgfVxuXG4gICAgY29uc3Qgcm9vbUhhc2ggPSBsb2NhdGlvbi5oYXNoLnN1YnN0cmluZygxKTtcblxuICAgIGNhbGxlclN0YXRlLnNldEF1ZGlvKHRydWUpO1xuICAgIGNhbGxlclN0YXRlLnNldFZpZGVvKHRydWUpO1xuXG4gICAgY29uc3QgdHVyblNlcnZlckNvbmZpZyA9IGF3YWl0IGZldGNoVHVyblNlcnZlckNvbmZpZygpO1xuICAgIG5ld0NhbGxDb250cm9sbGVyKHJvb21IYXNoLCB7IHR1cm5TZXJ2ZXJDb25maWcgfSk7XG4gIH0pO1xuPC9zY3JpcHQ+XG5cbjxtYWluIGlkPVwidmlkZW8tY29udGFpbmVyXCI+XG4gIDx2aWRlbyBjbGFzcz1cImZ1bGwtc2NyZWVuLXZpZGVvXCIgaWQ9XCJsb2NhbFZpZGVvXCIgYXV0b3BsYXkgcGxheXNpbmxpbmU+PC92aWRlbz5cbiAgPHZpZGVvIGNsYXNzPVwic2Vjb25kYXJ5LXZpZGVvXCIgaWQ9XCJyZW1vdGVWaWRlb1wiIGF1dG9wbGF5IHBsYXlzaW5saW5lPjwvdmlkZW8+XG4gIDxDb250cm9scyAvPlxuPC9tYWluPlxuXG48c3R5bGU+XG4gIG1haW4ge1xuICAgIG1heC13aWR0aDogMjQwcHg7XG4gIH1cblxuICBoMSB7XG4gICAgY29sb3I6ICNmZjNlMDA7XG4gICAgdGV4dC10cmFuc2Zvcm06IHVwcGVyY2FzZTtcbiAgICBmb250LXNpemU6IDRlbTtcbiAgICBmb250LXdlaWdodDogMTAwO1xuICB9XG5cbiAgLmZ1bGwtc2NyZWVuLXZpZGVvIHtcbiAgICBwb3NpdGlvbjogZml4ZWQ7XG4gICAgdG9wOiAwO1xuICAgIHJpZ2h0OiAwO1xuICAgIGxlZnQ6IDA7XG4gICAgYm90dG9tOiAwO1xuICAgIGhlaWdodDogMTAwJTtcbiAgICB3aWR0aDogMTAwJTtcbiAgfVxuXG4gIC5zZWNvbmRhcnktdmlkZW8ge1xuICAgIHBvc2l0aW9uOiBmaXhlZDtcbiAgICBib3R0b206IDQwcHg7XG4gICAgcmlnaHQ6IDQwcHg7XG4gICAgd2lkdGg6IDE1JTtcbiAgICBoZWlnaHQ6IDE1JTtcbiAgfVxuXG4gIEBtZWRpYSAobWluLXdpZHRoOiA2NDBweCkge1xuICAgIG1haW4ge1xuICAgICAgbWF4LXdpZHRoOiBub25lO1xuICAgIH1cbiAgfVxuPC9zdHlsZT5cbiJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFpQ0UsSUFBSSxjQUFDLENBQUMsQUFDSixTQUFTLENBQUUsS0FBSyxBQUNsQixDQUFDLEFBU0Qsa0JBQWtCLGNBQUMsQ0FBQyxBQUNsQixRQUFRLENBQUUsS0FBSyxDQUNmLEdBQUcsQ0FBRSxDQUFDLENBQ04sS0FBSyxDQUFFLENBQUMsQ0FDUixJQUFJLENBQUUsQ0FBQyxDQUNQLE1BQU0sQ0FBRSxDQUFDLENBQ1QsTUFBTSxDQUFFLElBQUksQ0FDWixLQUFLLENBQUUsSUFBSSxBQUNiLENBQUMsQUFFRCxnQkFBZ0IsY0FBQyxDQUFDLEFBQ2hCLFFBQVEsQ0FBRSxLQUFLLENBQ2YsTUFBTSxDQUFFLElBQUksQ0FDWixLQUFLLENBQUUsSUFBSSxDQUNYLEtBQUssQ0FBRSxHQUFHLENBQ1YsTUFBTSxDQUFFLEdBQUcsQUFDYixDQUFDLEFBRUQsTUFBTSxBQUFDLFlBQVksS0FBSyxDQUFDLEFBQUMsQ0FBQyxBQUN6QixJQUFJLGNBQUMsQ0FBQyxBQUNKLFNBQVMsQ0FBRSxJQUFJLEFBQ2pCLENBQUMsQUFDSCxDQUFDIn0= */";
     	append_dev(document.head, style);
     }
 
@@ -13103,17 +14686,19 @@ var app = (function () {
     			video1 = element("video");
     			t1 = space();
     			create_component(controls.$$.fragment);
+    			attr_dev(video0, "class", "full-screen-video svelte-klxn6w");
     			attr_dev(video0, "id", "localVideo");
     			video0.autoplay = true;
     			video0.playsInline = true;
-    			add_location(video0, file$2, 26, 2, 640);
+    			add_location(video0, file$2, 27, 2, 802);
+    			attr_dev(video1, "class", "secondary-video svelte-klxn6w");
     			attr_dev(video1, "id", "remoteVideo");
     			video1.autoplay = true;
     			video1.playsInline = true;
-    			add_location(video1, file$2, 27, 2, 695);
+    			add_location(video1, file$2, 28, 2, 883);
     			attr_dev(main, "id", "video-container");
-    			attr_dev(main, "class", "svelte-1e9puaw");
-    			add_location(main, file$2, 25, 0, 610);
+    			attr_dev(main, "class", "svelte-klxn6w");
+    			add_location(main, file$2, 26, 0, 772);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -13155,19 +14740,19 @@ var app = (function () {
     }
 
     function instance$2($$self, $$props, $$invalidate) {
-    	const participants = [{ id: 1, name: "matthew" }];
-
     	onMount(async () => {
     		if (!location.hash) {
     			location.hash = Math.floor(Math.random() * 16777215).toString(16);
     		}
 
     		const roomHash = location.hash.substring(1);
-    		newCallController(roomHash);
+    		callerState.setAudio(true);
+    		callerState.setVideo(true);
+    		const turnServerConfig = await fetchTurnServerConfig();
+    		newCallController(roomHash, { turnServerConfig });
     	});
 
-    	let { name } = $$props;
-    	const writable_props = ["name"];
+    	const writable_props = [];
 
     	Object.keys($$props).forEach(key => {
     		if (!~writable_props.indexOf(key) && key.slice(0, 2) !== "$$") console.warn(`<App> was created with unknown prop '${key}'`);
@@ -13176,37 +14761,24 @@ var app = (function () {
     	let { $$slots = {}, $$scope } = $$props;
     	validate_slots("App", $$slots, []);
 
-    	$$self.$set = $$props => {
-    		if ("name" in $$props) $$invalidate(0, name = $$props.name);
-    	};
-
     	$$self.$capture_state = () => ({
     		onMount,
     		getMedia,
     		adapter,
     		newCallController,
-    		startWebRTC,
+    		callerState,
     		Controls,
-    		participants,
-    		name
+    		fetchTurnServerConfig
     	});
 
-    	$$self.$inject_state = $$props => {
-    		if ("name" in $$props) $$invalidate(0, name = $$props.name);
-    	};
-
-    	if ($$props && "$$inject" in $$props) {
-    		$$self.$inject_state($$props.$$inject);
-    	}
-
-    	return [name];
+    	return [];
     }
 
     class App extends SvelteComponentDev {
     	constructor(options) {
     		super(options);
-    		if (!document.getElementById("svelte-1e9puaw-style")) add_css$2();
-    		init(this, options, instance$2, create_fragment$2, safe_not_equal, { name: 0 });
+    		if (!document.getElementById("svelte-klxn6w-style")) add_css$2();
+    		init(this, options, instance$2, create_fragment$2, safe_not_equal, {});
 
     		dispatch_dev("SvelteRegisterComponent", {
     			component: this,
@@ -13214,21 +14786,6 @@ var app = (function () {
     			options,
     			id: create_fragment$2.name
     		});
-
-    		const { ctx } = this.$$;
-    		const props = options.props || {};
-
-    		if (/*name*/ ctx[0] === undefined && !("name" in props)) {
-    			console.warn("<App> was created without expected prop 'name'");
-    		}
-    	}
-
-    	get name() {
-    		throw new Error("<App>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
-    	}
-
-    	set name(value) {
-    		throw new Error("<App>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
     	}
     }
 

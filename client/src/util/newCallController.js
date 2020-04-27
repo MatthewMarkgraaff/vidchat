@@ -1,18 +1,43 @@
 'use strict';
 
 import io from 'socket.io-client';
+import callerState from "../store/callerState";
+import connectedClients from "../store/callState";
 
-const configuration = {
+let configuration = {
   iceServers: [{
     urls: 'stun:stun.l.google.com:19302'
   }]
 };
 
+let localStream;
 let socket;
 let peerConnection;
+let room;
 
+if(callerState.audio) {
+  callerState.audio.subscribe(value =>{
+    if(localStream) {
+      localStream.getAudioTracks()[0].enabled = value;
+    }
+  });
+}
 
-export async function newCallController(room) {
+if(callerState.video) {
+  callerState.video.subscribe(value =>{
+    if(localStream) {
+      localStream.getVideoTracks()[0].enabled = value;
+    }
+  });
+}
+
+export async function newCallController(roomHash, options = {}) {
+  room = roomHash;
+
+  if(options.turnServerConfig) {
+    configuration.iceServers = options.turnServerConfig.iceServers;
+  }
+
   socket = io.connect();
 
   console.log("creating or joining room: " + room);
@@ -27,6 +52,12 @@ export async function newCallController(room) {
   });
 
   socket.on(socketActions.joined, (room)=>{
+    console.log(socket)
+    console.log("someone joined the room");
+  });
+
+  socket.on(socketActions.joined, (room)=>{
+    console.log(socket)
     console.log("someone joined the room");
   });
 
@@ -35,7 +66,6 @@ export async function newCallController(room) {
 
 export function startWebRTC(isOfferer) {
   peerConnection = new RTCPeerConnection(configuration);
-
   // 'onicecandidate' notifies us whenever an ICE agent needs to deliver a
   // message to the other peer through the signaling server
   peerConnection.onicecandidate = event => {
@@ -64,22 +94,16 @@ export function startWebRTC(isOfferer) {
     audio: true,
     video: true,
   }).then(stream => {
+    localStream = stream;
     // Display your local video in #localVideo element
     const localVideo = document.getElementById('localVideo')
     localVideo.srcObject = stream;
+    localVideo.muted = true;
     // Add your stream to be sent to the conneting peer
     stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
   }, onError);
 
-  // Listen to signaling data from Scaledrone
   socket.on('message', (message, client) => {
-    // Message was sent by us
-    /*
-    if (client.id === drone.clientId) {
-      return;
-    }
-    */
-
     if (message.sdp) {
       // This is called after receiving an offer or answer from another peer
       peerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp), () => {
@@ -111,7 +135,8 @@ function onError(err) {
 function onSuccess() {};
 
 export function sendMessage(message) {
-  console.log('Client sending message: ', message);
+  console.log(socket.id)
+  message.room = room;
   socket.emit(
     socketActions.message,
     message,
@@ -119,6 +144,8 @@ export function sendMessage(message) {
 }
 
 export const socketActions = {
+  connection: 'connection',
+  disconnect: 'disconnect',
   createOrJoin: "create or join",
   created: "created",
   join: "join",

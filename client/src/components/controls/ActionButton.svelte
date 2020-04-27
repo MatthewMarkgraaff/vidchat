@@ -1,11 +1,13 @@
 <script>
+  export let onClick;
   export let onIcon;
   export let offIcon;
   export let onState = true;
 
   function handleOnClick() {
-    if(onIcon && offIcon)
-      onState = !onState;
+    if(onClick) {
+      onClick();
+    }
   }
 </script>
 

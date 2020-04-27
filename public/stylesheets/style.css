@@ -55,9 +55,6 @@ body {
   .is-hidden-tablet-portrait-up {
     display: none !important; } }
 
-.navbar .navbar-item .logo {
-  max-height: 2rem; }
-
 /*! bulma.io v0.8.2 | MIT License | github.com/jgthms/bulma */
 @keyframes spinAround {
   from {
@@ -7172,6 +7169,28 @@ label.panel-block {
 .footer {
   background-color: #fafafa;
   padding: 3rem 1.5rem 6rem; }
+
+.navbar .navbar-item .logo {
+  min-height: 2.5rem;
+  max-height: 2.5rem; }
+
+.hero-body .actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center; }
+  .hero-body .actions .button {
+    margin-bottom: 1rem; }
+
+#password-form {
+  max-width: 420px;
+  flex-direction: row;
+  justify-content: space-between; }
+  #password-form .control {
+    display: flex;
+    justify-content: space-between; }
+    #password-form .control input {
+      max-width: 280px;
+      margin-right: 8px; }
 
 body .site-main {
   min-height: 100%; }

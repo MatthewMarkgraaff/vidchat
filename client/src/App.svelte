@@ -3,13 +3,11 @@
   import "../assets/main.scss";
   import getMedia from './util/getMedia';
   import adapter from 'webrtc-adapter';
-  import { newCallController, startWebRTC } from './util/newCallController';
+  import { newCallController } from './util/newCallController';
+  import callerState from './store/callerState';
 
   import Controls from './components/controls/Controls.svelte'
-
-  const participants = [
-    { id: 1, name: "matthew" }
-  ];
+  import { fetchTurnServerConfig } from './util/apiClient';
 
   onMount(async ()=>{
     if (!location.hash) {
@@ -17,24 +15,24 @@
     }
 
     const roomHash = location.hash.substring(1);
-    newCallController(roomHash);
-  });
 
-  export let name;
+    callerState.setAudio(true);
+    callerState.setVideo(true);
+
+    const turnServerConfig = await fetchTurnServerConfig();
+    newCallController(roomHash, { turnServerConfig });
+  });
 </script>
 
 <main id="video-container">
-  <video id="localVideo" autoplay playsinline></video>
-  <video id="remoteVideo" autoplay playsinline></video>
+  <video class="full-screen-video" id="localVideo" autoplay playsinline></video>
+  <video class="secondary-video" id="remoteVideo" autoplay playsinline></video>
   <Controls />
 </main>
 
 <style>
   main {
-    text-align: center;
-    padding: 1em;
     max-width: 240px;
-    margin: 0 auto;
   }
 
   h1 {
@@ -42,6 +40,24 @@
     text-transform: uppercase;
     font-size: 4em;
     font-weight: 100;
+  }
+
+  .full-screen-video {
+    position: fixed;
+    top: 0;
+    right: 0;
+    left: 0;
+    bottom: 0;
+    height: 100%;
+    width: 100%;
+  }
+
+  .secondary-video {
+    position: fixed;
+    bottom: 40px;
+    right: 40px;
+    width: 15%;
+    height: 15%;
   }
 
   @media (min-width: 640px) {
