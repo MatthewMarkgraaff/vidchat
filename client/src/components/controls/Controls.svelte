@@ -34,5 +34,6 @@
     right: 0;
     display: flex;
     justify-content: center;
+    z-index: 101;
   }
 </style>

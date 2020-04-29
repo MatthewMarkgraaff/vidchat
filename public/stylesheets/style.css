@@ -7181,6 +7181,16 @@ label.panel-block {
   .hero-body .actions .button {
     margin-bottom: 1rem; }
 
+.hero-body h1 {
+  font-weight: 900;
+  font-size: 4rem; }
+
+.hero-body h2 {
+  font-style: italic; }
+
+.hero-body .banner-image {
+  margin-bottom: 1rem; }
+
 #password-form {
   max-width: 420px;
   flex-direction: row;

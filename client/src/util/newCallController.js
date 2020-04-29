@@ -85,7 +85,12 @@ export function startWebRTC(isOfferer) {
   peerConnection.ontrack = event => {
     const stream = event.streams[0];
     if (!remoteVideo.srcObject || remoteVideo.srcObject.id !== stream.id) {
-      const remoteVideo = document.getElementById('remoteVideo')
+      const remoteVideo = document.getElementById('remoteVideo');
+      const localVideo = document.getElementById('localVideo');
+      localVideo.classList.toggle("full-screen-video");
+      localVideo.classList.toggle("secondary-video");
+      remoteVideo.classList.toggle("full-screen-video");
+      remoteVideo.classList.toggle("secondary-video");
       remoteVideo.srcObject = stream;
     }
   };

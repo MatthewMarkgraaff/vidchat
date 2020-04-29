@@ -22,15 +22,16 @@ block content
     .hero-body
       .container.has-text-centered
         h1.title
-          | Discourse video chat
+          | Discourse
         h2.subtitle
-          | South African peer to peer video chats
+          | Proudly South African video calls
+        img.banner-image(src='/assets/images/vidcall.svg' alt="videochat")
         .actions#start-call-actions
-          a.button.is-success.is-inverted(href=`/call/${uuid}`)
+          a#new-video-call.button.is-primary.is-inverted(href="#")
             span.icon
               i.fa.fab.fa-video
             span Start a video call
-          a#with-password-btn.button.is-success.is-inverted(href='#')
+          a#with-password-btn.button.is-primary.is-inverted(href='#')
             span.icon
               i.fa.fab.fa-lock
             span Setup password protected call
@@ -59,3 +60,10 @@ block content
       passwordForm.classList.toggle("is-hidden");
       startCallActions.classList.toggle("is-hidden");
     }
+
+  script.
+    var newCallBtn = document.getElementById("new-video-call");
+
+    newCallBtn.addEventListener("click", function() {
+      window.open("/call/#{uuid}", '_blank', 'location=yes,height=900,width=1000,scrollbars=no,status=yes');
+    });

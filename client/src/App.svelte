@@ -50,14 +50,16 @@
     bottom: 0;
     height: 100%;
     width: 100%;
+    z-index: 1;
   }
 
   .secondary-video {
     position: fixed;
-    bottom: 40px;
+    top: 40px;
     right: 40px;
     width: 15%;
     height: 15%;
+    z-index: 10;
   }
 
   @media (min-width: 640px) {
